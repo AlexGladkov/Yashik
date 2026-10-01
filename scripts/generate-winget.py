@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 PACKAGE_ID = "AlexGladkov.Yashik"
-MANIFEST_VERSION = "1.12.0"
+MANIFEST_VERSION = "1.10.0"
 ARCHIVES = {
     "x64": "yashik-windows-x86_64.zip",
     "arm64": "yashik-windows-aarch64.zip",
@@ -67,7 +67,6 @@ Installers:
     PortableCommandAlias: yashik
   InstallerUrl: "{base}/{ARCHIVES['x64']}"
   InstallerSha256: "{checksums[ARCHIVES['x64']].upper()}"
-  Scope: user
 - Architecture: arm64
   InstallerType: zip
   NestedInstallerType: portable
@@ -76,7 +75,6 @@ Installers:
     PortableCommandAlias: yashik
   InstallerUrl: "{base}/{ARCHIVES['arm64']}"
   InstallerSha256: "{checksums[ARCHIVES['arm64']].upper()}"
-  Scope: user
 ManifestType: installer
 ManifestVersion: {MANIFEST_VERSION}
 '''

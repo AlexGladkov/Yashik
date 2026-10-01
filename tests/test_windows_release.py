@@ -127,6 +127,8 @@ class WinGetManifestTests(unittest.TestCase):
         self.assertEqual(installer.count("PortableCommandAlias: yashik"), 2)
         self.assertIn("Architecture: x64", installer)
         self.assertIn("Architecture: arm64", installer)
+        self.assertIn(f"ManifestVersion: {generate_winget.MANIFEST_VERSION}", installer)
+        self.assertNotIn("Scope:", installer)
         self.assertIn(
             "https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1/yashik-windows-x86_64.zip",
             installer,

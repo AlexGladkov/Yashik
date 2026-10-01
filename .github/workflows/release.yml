@@ -254,6 +254,11 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64_arm64
+      - name: Configure MSVC for x64 build
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
       - name: Confirm native Windows runner architecture
         if: matrix.native_tests
         shell: pwsh
@@ -280,7 +285,19 @@ jobs:
           cargo +1.88.0 clippy --locked --manifest-path tools/windows-launcher/Cargo.toml --all-targets -- -D warnings
       - name: Build optimized Windows bridge
         shell: pwsh
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo +1.88.0 build --release --locked --manifest-path tools/windows-launcher/Cargo.toml --target $env:TARGET
+      - name: Check the executable does not require the MSVC redistributable
+        shell: pwsh
+        run: |
+          $binary = "tools/windows-launcher/target/$env:TARGET/release/yashik.exe"
+          $dependencies = (& dumpbin.exe /DEPENDENTS $binary 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect PE dependencies for $binary`: $dependencies" }
+          if ($dependencies -match '(?i)\b(?:VCRUNTIME|MSVCP)[A-Z0-9_.-]*\.DLL\b') {
+            throw "Windows bridge depends on the MSVC redistributable: $dependencies"
+          }
+          Write-Host "Verified no VCRUNTIME/MSVCP DLL dependency for $env:TARGET."
       - name: Package and probe Windows ZIP
         shell: pwsh
         run: |
@@ -375,13 +392,19 @@ jobs:
             $alias = Join-Path $links 'yashik.exe'
             if (-not (Test-Path -LiteralPath $alias -PathType Leaf)) { throw 'WinGet did not install the exact yashik.exe portable command alias' }
 
+            $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+            $machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+            $normalizedLinks = [System.IO.Path]::GetFullPath($links).TrimEnd('\')
+            $registeredEntries = @($userPath, $machinePath) |
+              ForEach-Object { if ($_ ) { $_ -split ';' } } |
+              ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.Trim()).TrimEnd('\') }
+            if ($registeredEntries -notcontains $normalizedLinks) {
+              throw 'WinGet did not persist its portable Links directory in the user or machine PATH'
+            }
+
             $pathEntries = [System.Collections.Generic.List[string]]::new()
-            foreach ($pathValue in @(
-              [Environment]::GetEnvironmentVariable('PATH', 'User'),
-              [Environment]::GetEnvironmentVariable('PATH', 'Machine'),
-              $env:PATH,
-              $links
-            )) {
+            foreach ($pathValue in @($userPath, $machinePath, $env:PATH)) {
+              if (-not $pathValue) { continue }
               foreach ($entry in ($pathValue -split ';')) {
                 $entry = $entry.Trim()
                 if ($entry -and -not $pathEntries.Contains($entry)) { $pathEntries.Add($entry) }
