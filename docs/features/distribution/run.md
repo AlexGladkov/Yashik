@@ -41,3 +41,19 @@ GitHub publication, tap updates, and the real Ubuntu acceptance checks.
 Pre-tag workflow dispatches are build-only. A tag creates a draft release;
 publication follows the relevant review/build/package gates. Exact final results
 and remaining platform limitations belong in validation.md.
+
+Windows integration additionally required independent fixes for distro-name
+parsing, Windows-only executor fixtures, quoted all-numeric SHA256 values,
+WinGet schema/header compatibility and unsupported portable Scope metadata,
+exact command alias plus persistent PATH verification, and a real currently
+published Ubuntu Base fixture. Downloaded PE artifacts confirmed a dependency
+on VCRUNTIME140.dll before the static CRT fix. Both final architectures were
+then inspected independently and import only Windows system DLLs.
+
+WinGet local-manifest inventory is removed by exact display name in isolated CI;
+the catalog ID is not resolvable before catalog publication. Noninteractive
+source agreement acceptance is confined to the hosted test runner. A rare
+Darwin CLI fixture ENOENT exposed timestamp-only directory naming; an atomic
+counter now guarantees uniqueness within the test process. The observed error
+is real; a timestamp collision is an inferred cause, not a separately reproduced
+clock failure.
