@@ -44,7 +44,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 ## Сборка из исходников
 
-Нужны Rust 1.85 или новее и доступ к crates.io. На Ubuntu также нужен linker,
+Нужны Rust 1.88 или новее и доступ к crates.io. На Ubuntu также нужен linker,
 например из `build-essential`:
 
 ```sh
