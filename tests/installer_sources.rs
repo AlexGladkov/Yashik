@@ -14,7 +14,7 @@ struct TempTree(PathBuf);
 impl TempTree {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "yashik-installer-sources-{}-{}",
+            "ys-src-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -159,13 +159,13 @@ fn local_snapshot_rejects_dangling_and_external_symlinks_and_special_files() {
     )
     .is_err());
 
-    let special_tree = temp.path().join("special-file-tree");
+    let special_tree = temp.path().join("special");
     fs::create_dir_all(&special_tree).unwrap();
     let _socket = UnixListener::bind(special_tree.join("socket")).unwrap();
     assert!(sources::resolve(
         &paths,
         &Source::Local {
-            path: "special-file-tree".to_owned()
+            path: "special".to_owned()
         },
         Some(&special_tree),
     )
