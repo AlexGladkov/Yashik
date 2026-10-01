@@ -59,9 +59,8 @@ fn yaml_parser_requires_fields_and_semantics_report_paths() {
         "version: 1\nharnesses: {}\nmcp:\n  empty-step:\n    source:\n      type: git\n      url: repo\n    transport: stdio\n    run:\n      command: node\n    install:\n      steps:\n        - []\n",
     ] {
         let manifest = serde_yaml::from_str::<Manifest>(input);
-        match manifest {
-            Ok(manifest) => assert!(validate_manifest(&manifest).is_err(), "semantic invalidity passed: {input}"),
-            Err(_) => {}
+        if let Ok(manifest) = manifest {
+            assert!(validate_manifest(&manifest).is_err(), "semantic invalidity passed: {input}");
         }
     }
 }

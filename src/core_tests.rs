@@ -68,12 +68,11 @@ fn accepts_only_exact_local_disable_sentinel() {
         r#"{"version":1,"harnesses":{"codex":{"skills":{"gone":{"enabled":false,"from":"extra"}}}}}"#,
         r#"{"version":1,"harnesses":{},"skills":{"gone":{"enabled":false}}}"#,
     ] {
-        match parse_json(invalid) {
-            Ok(manifest) => assert!(
+        if let Ok(manifest) = parse_json(invalid) {
+            assert!(
                 validate_manifest(&manifest).is_err(),
                 "invalid sentinel passed validation: {invalid}"
-            ),
-            Err(_) => {}
+            );
         }
     }
 }
@@ -97,15 +96,15 @@ fn rejects_invalid_argv_and_native_global_resources() {
 
 #[test]
 fn agent_variants_require_portable_description_and_reject_native_description() {
-    let valid_native = r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","source":{"type":"git","url":"repo"}}}}}}"#;
+    let valid_native = r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","source":{"type":"git","url":"https://example.invalid/repo"}}}}}}"#;
     let manifest = parse_json(valid_native).expect("native agent with only source should parse");
     assert!(validate_manifest(&manifest).is_ok());
 
     for invalid in [
-        r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","description":null,"source":{"type":"git","url":"repo"}}}}}}"#,
-        r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","description":"unexpected","source":{"type":"git","url":"repo"}}}}}}"#,
-        r#"{"version":1,"harnesses":{"codex":{"agents":{"portable":{"format":"portable","description":null,"source":{"type":"git","url":"repo"}}}}}}"#,
-        r#"{"version":1,"harnesses":{"codex":{"agents":{"portable":{"format":"portable","source":{"type":"git","url":"repo"}}}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","description":null,"source":{"type":"git","url":"https://example.invalid/repo"}}}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{"agents":{"native":{"format":"native","description":"unexpected","source":{"type":"git","url":"https://example.invalid/repo"}}}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{"agents":{"portable":{"format":"portable","description":null,"source":{"type":"git","url":"https://example.invalid/repo"}}}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{"agents":{"portable":{"format":"portable","source":{"type":"git","url":"https://example.invalid/repo"}}}}}}"#,
     ] {
         assert!(
             parse_json(invalid).is_err(),
@@ -219,5 +218,26 @@ fn from_paths_are_checked_lexically_and_local_source_paths_are_not_canonicalized
             validate_manifest(&manifest).is_err(),
             "invalid from accepted: {from:?}"
         );
+    }
+}
+
+#[test]
+fn installer_names_and_mcp_interpolation_are_validated_before_installation() {
+    let valid = r#"{
+      "version":1,
+      "harnesses":{"codex":{}},
+      "mcp":{"safe-name":{"source":{"type":"local","path":"."},"transport":"stdio","run":{"command":"node","args":["${source}/server.js","${env:API_TOKEN}"],"env":{"API_TOKEN":"${env:API_TOKEN}"}}}}
+    }"#;
+    assert!(validate_manifest(&parse_json(valid).unwrap()).is_ok());
+
+    for invalid in [
+        r#"{"version":1,"harnesses":{"codex":{}},"skills":{"../outside":{"source":{"type":"local","path":"."}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{}},"mcp":{"literal-secret":{"source":{"type":"local","path":"."},"transport":"stdio","run":{"command":"node","env":{"TOKEN":"do-not-store"}}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{}},"mcp":{"unknown-token":{"source":{"type":"local","path":"."},"transport":"stdio","run":{"command":"node","args":["${unknown:VALUE}"]}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{}},"mcp":{"unclosed-token":{"source":{"type":"local","path":"."},"transport":"stdio","run":{"command":"node","args":["${env:TOKEN"]}}}}"#,
+        r#"{"version":1,"harnesses":{"codex":{}},"mcp":{"shell-install":{"source":{"type":"local","path":"."},"transport":"stdio","run":{"command":"node"},"install":{"steps":[["npm","run","${source}"]]}}}}"#,
+    ] {
+        let manifest = parse_json(invalid).unwrap();
+        assert!(validate_manifest(&manifest).is_err(), "accepted: {invalid}");
     }
 }

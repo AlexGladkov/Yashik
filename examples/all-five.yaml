@@ -1,0 +1,51 @@
+# Broader installer smoke example. Uses a small working local MCP server.
+# Log into the coding clients yourself after installation.
+version: 1
+harnesses:
+  codex:
+    version: "0.159.3"
+  claude:
+    version: "2.1.286"
+  opencode:
+    version: "1.18.34"
+  pi:
+    version: "0.99.2"
+    agents:
+      test-reviewer:
+        enabled: false # Pi core has no native saved-subagent adapter.
+  omp:
+    version: "18.4.8"
+mcp:
+  echo:
+    source:
+      type: local
+      path: ./resources
+    install:
+      requires: [node]
+      steps:
+        - [node, --check, mcp/echo.js]
+    transport: stdio
+    run:
+      command: node
+      args: ["${source}/mcp/echo.js"]
+skills:
+  setup-check:
+    source:
+      type: local
+      path: ./resources
+    from: skills/setup-check
+agents:
+  test-reviewer:
+    format: portable
+    description: Review a small change and report concrete defects.
+    source:
+      type: local
+      path: ./resources
+    from: agents/test-reviewer.md
+rules:
+  concise-report:
+    format: portable
+    source:
+      type: local
+      path: ./resources
+    from: rules/concise-report.md

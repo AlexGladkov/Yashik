@@ -1,5 +1,5 @@
-# Illustrative proposal only; replace every example value before use.
-# This file is not accepted by a released Yashik CLI yet.
+# Schema illustration only; replace all placeholder sources before init.
+# For a real installation use codex-voltagent.yaml or all-five.yaml.
 version: 1 # YAML schema version
 
 harnesses:

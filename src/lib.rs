@@ -1,4 +1,5 @@
 pub mod effective;
+pub mod install;
 pub mod schema;
 pub mod validation;
 

@@ -1,0 +1,21 @@
+# Real installation example: Codex plus two native VoltAgent subagents.
+# The source is pinned so later upstream edits do not change this setup.
+version: 1
+harnesses:
+  codex:
+    version: "0.159.3"
+    agents:
+      backend-developer:
+        format: native
+        source:
+          type: git
+          url: https://github.com/VoltAgent/awesome-codex-subagents.git
+          ref: 7add6913c53ccbbc250c481815c9c6afb02709c6
+        from: categories/01-core-development/backend-developer.toml
+      reviewer:
+        format: native
+        source:
+          type: git
+          url: https://github.com/VoltAgent/awesome-codex-subagents.git
+          ref: 7add6913c53ccbbc250c481815c9c6afb02709c6
+        from: categories/04-quality-security/reviewer.toml

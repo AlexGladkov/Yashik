@@ -1,17 +1,20 @@
 [package]
 name = "yashik"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.82"
-description = "Strict schema validation for a personal AI client environment manifest"
+rust-version = "1.85"
+description = "Install and reconcile personal AI client environments from a strict manifest"
 license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_yaml = { package = "yaml_serde", version = "=0.10.7" }
-
-[dev-dependencies]
 serde_json = "1"
+toml_edit = "0.22"
+sha2 = "0.10"
+fs2 = "0.4"
+jsonc-parser = { version = "0.34", features = ["cst", "serde_json"] }
+libc = "0.2"
 
 [[bin]]
 name = "yashik"

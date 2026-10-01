@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use yashik::effective::{build_effective, EffectiveManifest};
+use yashik::install::{doctor, engine, launcher, paths};
 use yashik::schema::Manifest;
 use yashik::validation::ValidationIssue;
 
@@ -19,13 +20,20 @@ fn run(args: Vec<String>) -> u8 {
             println!("yashik {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        [command, manifest] if command == "init" => run_init(Path::new(manifest)),
-        [command] if command == "doctor" => {
-            eprintln!(
-                "error: doctor is unavailable in this stage; no environment diagnostics were run"
-            );
-            2
-        }
+        [command, manifest] if command == "check" => match load_effective(Path::new(manifest)) {
+            Ok((manifest_path, effective)) => {
+                println!("Manifest is valid: {}", manifest_path.display());
+                report_effective(&effective);
+                0
+            }
+            Err(code) => code,
+        },
+        [command, manifest] if command == "init" => match load_effective(Path::new(manifest)) {
+            Ok((manifest_path, effective)) => run_init(&manifest_path, &effective),
+            Err(code) => code,
+        },
+        [command] if command == "doctor" => run_doctor(),
+        [command, launch_id] if command == "mcp-launch" => run_launcher(launch_id),
         _ => {
             eprintln!("error: invalid arguments\n\n{}", usage());
             2
@@ -33,15 +41,12 @@ fn run(args: Vec<String>) -> u8 {
     }
 }
 
-fn run_init(manifest_path: &Path) -> u8 {
+fn load_effective(manifest_path: &Path) -> Result<(PathBuf, EffectiveManifest), u8> {
     let bytes = match std::fs::read(manifest_path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!(
-                "error: could not read manifest {}: {error}",
-                manifest_path.display()
-            );
-            return 1;
+            eprintln!("error: could not read manifest: {error}");
+            return Err(1);
         }
     };
     let manifest: Manifest = match serde_yaml::from_slice(&bytes) {
@@ -53,30 +58,114 @@ fn run_init(manifest_path: &Path) -> u8 {
                     format!(" at line {}, column {}", location.line(), location.column())
                 })
                 .unwrap_or_default();
-            eprintln!(
-                "error: invalid YAML or schema in manifest {}{location}",
-                manifest_path.display()
-            );
-            return 1;
+            eprintln!("error: invalid YAML or schema in manifest{location}");
+            return Err(1);
         }
     };
-    let manifest_path = match absolute_path(manifest_path) {
+    let absolute = match absolute_path(manifest_path) {
         Ok(path) => path,
         Err(error) => {
             eprintln!("error: could not resolve manifest directory: {error}");
-            return 1;
+            return Err(1);
         }
     };
-    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let manifest_dir = absolute.parent().unwrap_or_else(|| Path::new("."));
     let effective = match build_effective(&manifest, manifest_dir) {
         Ok(effective) => effective,
         Err(issues) => {
-            report_validation_errors(&manifest_path, &issues);
+            report_validation_errors(&issues);
+            return Err(1);
+        }
+    };
+    Ok((absolute, effective))
+}
+
+fn run_init(manifest_path: &Path, effective: &EffectiveManifest) -> u8 {
+    let paths = match paths::discover() {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("error: could not discover user install paths: {error}");
             return 1;
         }
     };
-    report_effective(&manifest_path, &effective);
-    0
+    if let Err(error) = paths::create_private(&paths) {
+        eprintln!("error: could not prepare private installer directories: {error}");
+        return 1;
+    }
+    println!("Installing from {}", manifest_path.display());
+    match engine::init(effective, &paths) {
+        Ok(report) => {
+            print_report(&report);
+            print_path_hint(&paths.bin);
+            if report.has_failures() {
+                1
+            } else {
+                0
+            }
+        }
+        Err(error) => {
+            eprintln!("error: installation could not start: {error}");
+            1
+        }
+    }
+}
+
+fn print_path_hint(bin: &Path) {
+    let Some(current_path) = std::env::var_os("PATH") else {
+        return;
+    };
+    if std::env::split_paths(&current_path).any(|entry| entry == bin) {
+        return;
+    }
+    let path = bin.to_string_lossy();
+    if path.contains(':') || path.contains('\n') || path.contains('\r') {
+        return;
+    }
+    let quoted = format!("'{}'", path.replace('\'', "'\\''"));
+    eprintln!(
+        "Add Yashik's CLI directory to PATH in new shells with: export PATH={quoted}:\"$PATH\""
+    );
+}
+
+fn run_doctor() -> u8 {
+    let paths = match paths::discover() {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("error: could not discover user install paths: {error}");
+            return 1;
+        }
+    };
+    match doctor::run(&paths) {
+        Ok(report) => {
+            print_report(&report);
+            if report.has_failures() {
+                1
+            } else {
+                0
+            }
+        }
+        Err(error) => {
+            eprintln!("error: doctor could not read installer state: {error}");
+            1
+        }
+    }
+}
+
+fn run_launcher(launch_id: &str) -> u8 {
+    let paths = match paths::discover() {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("error: could not discover user install paths: {error}");
+            return 1;
+        }
+    };
+    match launcher::run(&paths, launch_id) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("error: MCP launcher: {error}");
+            1
+        }
+    }
 }
 
 fn absolute_path(path: &Path) -> std::io::Result<PathBuf> {
@@ -87,16 +176,71 @@ fn absolute_path(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-fn report_validation_errors(path: &Path, issues: &[ValidationIssue]) {
-    eprintln!("error: manifest validation failed: {}", path.display());
+fn report_validation_errors(issues: &[ValidationIssue]) {
+    eprintln!("error: manifest validation failed");
     for issue in issues {
-        eprintln!("  {}: {}", issue.path, issue.message);
+        eprintln!("  {}: {}", sanitize_issue_path(&issue.path), issue.message);
     }
 }
 
-fn report_effective(path: &Path, effective: &EffectiveManifest) {
-    println!("Manifest schema is valid: {}", path.display());
-    println!("This stage only validates the schema; it does not install software, access sources, or change configuration.");
+fn sanitize_issue_path(path: &str) -> String {
+    path.split('.')
+        .map(|part| {
+            let indexed = part.split_once('[').is_some_and(|(name, index)| {
+                matches!(name, "requires" | "steps" | "args")
+                    && index
+                        .strip_suffix(']')
+                        .is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+            });
+            let known = matches!(
+                part,
+                "version"
+                    | "harnesses"
+                    | "codex"
+                    | "claude"
+                    | "opencode"
+                    | "pi"
+                    | "omp"
+                    | "mcp"
+                    | "skills"
+                    | "agents"
+                    | "rules"
+                    | "source"
+                    | "url"
+                    | "ref"
+                    | "path"
+                    | "from"
+                    | "run"
+                    | "command"
+                    | "env"
+                    | "install"
+                    | "requires"
+                    | "steps"
+                    | "format"
+                    | "description"
+                    | "enabled"
+            );
+            if known || indexed || valid_safe_identifier(part) {
+                part.to_owned()
+            } else {
+                "<name>".to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn valid_safe_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && value.len() <= 63
+}
+
+fn report_effective(effective: &EffectiveManifest) {
     if effective.harnesses.is_empty() {
         println!("No enabled harnesses are listed.");
         return;
@@ -120,12 +264,28 @@ fn print_resource_names<'a>(section: &str, names: impl Iterator<Item = &'a str>)
     }
 }
 
+fn print_report(report: &engine::RunReport) {
+    for note in &report.notes {
+        println!("{note}");
+    }
+    for operation in &report.operations {
+        match &operation.message {
+            Some(message) => println!("{:?}: {} — {message}", operation.outcome, operation.id),
+            None => println!("{:?}: {}", operation.outcome, operation.id),
+        }
+    }
+}
+
 fn print_help() {
     println!("{}", usage());
-    println!("\n`init` validates a manifest and displays effective resource names. It performs no installation or configuration changes.");
-    println!("`doctor` is unavailable in this stage.");
+    println!("`check` validates a manifest without changing the environment.");
+    println!("`init` installs and reconciles the requested CLIs and resources.");
+    println!(
+        "`doctor` inspects recorded installations without changing files or accessing the network."
+    );
+    println!("`mcp-launch` is the internal stdio launcher used by registered MCP servers.");
 }
 
 fn usage() -> &'static str {
-    "Usage:\n  yashik init <manifest>\n  yashik doctor\n  yashik --help\n  yashik --version"
+    "Usage:\n  yashik init <manifest>\n  yashik check <manifest>\n  yashik doctor\n  yashik mcp-launch <launch-id>\n  yashik --help\n  yashik --version"
 }

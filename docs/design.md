@@ -1,16 +1,16 @@
 # Спецификация и дорожная карта
 
-Статус: этап 1 реализован и одобрен Review с ограничением воспроизводимости
-обычной Cargo-сборки. На Linux полный временный прогон с проверенными upstream
-исходниками YAML parser прошёл: 15 тестов (10 core, 3 YAML, 2 CLI), плюс smoke
-test бинарника. Обычные `cargo build`/`cargo test` не разрешают registry
-зависимости из-за недоступного crates.io DNS; macOS не проверялась. Root
-`Cargo.lock` не создан; временный lockfile остался в `/tmp`. См. [протокол
-прогона](features/rust-schema/run.md) и [Review](features/rust-schema/review.md).
-Исходные требования собраны в [requirements.md](requirements.md), выводы
-исследования — в [features/yashik-foundation/research.md](features/yashik-foundation/research.md).
-Подробные критерии этапа — в [Plan](features/yashik-foundation/plan.md); таблица
-ниже сводит их в дорожную карту.
+Статус: установщик реализован поверх YAML-схемы. Обычная Cargo
+registry-сборка восстановлена. Первый настоящий Ubuntu-прогон установил Codex
+и два native агента VoltAgent; расширенный прогон установил все пять CLI и
+проверил локальный MCP через их конфиги. Independent Review и итоговая Validate
+фиксируются в [installer reports](features/installer/run.md).
+
+Текущие контракты клиентов и план реализации находятся в
+[Research](features/installer/research-adapters.md),
+[Plan](features/installer/plan.md) и
+[живом Ubuntu-прогоне](features/installer/live-ubuntu.md).
+Они уточняют устаревшие предположения исходной дорожной карты ниже.
 
 ## Цель и сценарий
 

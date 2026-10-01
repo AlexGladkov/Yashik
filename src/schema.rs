@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::de::{self, MapAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub type StrictMap<K, V> = BTreeMap<K, V>;
 
@@ -59,7 +59,7 @@ pub struct Manifest {
     pub rules: StrictMap<String, Rule>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum HarnessId {
     Codex,
@@ -126,7 +126,7 @@ pub struct DisabledEntry {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Source {
     Git {
@@ -139,13 +139,13 @@ pub enum Source {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
     Stdio,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Mcp {
     pub source: Source,
@@ -155,7 +155,7 @@ pub struct Mcp {
     pub install: Option<Install>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Install {
     #[serde(default)]
@@ -164,7 +164,7 @@ pub struct Install {
     pub steps: Vec<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
     pub command: String,
@@ -181,7 +181,7 @@ pub struct Skill {
     pub from: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ResourceFormat {
     Portable,
