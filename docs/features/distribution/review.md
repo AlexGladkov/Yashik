@@ -86,6 +86,38 @@ comparison on Darwin. Inspection found no weakening of symlink/identity checks.
 The selected Linux checks pass; corrected native Darwin compile/test results
 are still required from the next CI run.
 
+The subsequent native CI run `36908444762`, as reported by root, compiles on
+both Darwin targets but fails four library fixtures whose temporary roots
+contain the platform's `/var` → `/private/var` alias. Follow-up Review on top
+of `0415ef7` covers only root canonicalisation after directory creation in
+the two `src/install/engine.rs` test fixtures, the
+`src/install/adapters.rs::removal_tests::TempTree` helper, and
+`tests/installer_state.rs::TempTree`. These changes affect test scaffolding
+only; no production path validation, identity check, or symlink rejection is
+removed. Resources intentionally created as symlinks inside the canonical
+root remain symlinks and the negative assertions remain active.
+
+Independent regression check created a Linux temporary directory with a
+symlink alias, set only the child test process's `TMPDIR` to that alias, and
+ran `cargo test --locked --lib --test installer_state`. All 21 library tests
+and five state tests passed, including quarantine failure preservation,
+artifact cleanup, rules preservation, and linked state/parent rejection.
+No open review finding results from the narrow fixture diff. This reproduces
+the aliased-temp-root condition on Linux; the next native Darwin CI run is
+still required for macOS acceptance.
+
+CI run `36909421287`, as reported by root, passed the Darwin library,
+adapter, and engine checks before `installer_sources` reached a Unix socket
+fixture longer than the platform's socket pathname limit. Review of
+`a0e5a1a` confirms it only shortens the source test's temporary-directory
+prefix and the special-file subdirectory, with its `Source::Local.path`
+updated consistently. PID/counter uniqueness, canonicalisation, cleanup,
+socket creation and the rejection assertion remain unchanged. The specific
+`local_snapshot_rejects_dangling_and_external_symlinks_and_special_files`
+test passed independently on Linux; root reports all nine source tests pass.
+No new review finding. Native Darwin CI must still confirm the shorter path
+on its actual runner before platform acceptance.
+
 Workflow inspection confirmed read-only default permissions, write access only
 for draft creation, strict tag/Cargo/script agreement, explicit native Unix
 runners and architecture checks, target tests before packaging, static ELF

@@ -12,13 +12,13 @@
 Linux и macOS, x86_64 и ARM64:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL \
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
   https://github.com/AlexGladkov/Yashik/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Скрипт устанавливает только Ящик в `~/.local/bin`, проверяет SHA-256 архива и
-не изменяет shell-профиль. Rust не нужен. Для другой папки используйте
+не изменяет shell-профиль. Нужны `curl`, `tar` и `sha256sum` либо `shasum`; Rust не нужен. Для другой папки используйте
 `sh -s -- --bin-dir /absolute/path`. Повторная установка идентичного бинарника
 не меняет его; для замены другой версии нужен `--force`.
 
@@ -31,15 +31,56 @@ brew install AlexGladkov/tap/yashik
 Закреплённая версия:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL \
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
   https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1/install.sh | \
   sh -s -- --version 0.2.1
+```
+
+Чтобы сначала скачать и проверить сам скрипт, выполните в пустой папке:
+
+```sh
+release=https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/install.sh"
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/SHA256SUMS"
+awk '$2 == "install.sh" {print}' SHA256SUMS > install.sha256
+# Linux:
+sha256sum -c install.sha256 && sh install.sh
+# macOS: shasum -a 256 -c install.sha256 && sh install.sh
 ```
 
 Скрипт каждого релиза содержит собственную версию по умолчанию: архив и
 контрольные суммы скачиваются из одного закреплённого релиза. Архивы для Linux
 собираются со статической musl, для macOS — с deployment target 13.0.
 Результаты реальных проверок платформ описаны в
+[distribution validation](docs/features/distribution/validation.md).
+
+## Windows: WinGet и WSL
+
+Windows-пакет содержит `yashik.exe`, который запускает Linux-версию в WSL.
+Нужен уже установленный и инициализированный WSL-дистрибутив. Установка пакета
+не включает Windows features и не создаёт дистрибутив.
+
+После появления пакета в каталоге WinGet:
+
+```powershell
+winget install --id AlexGladkov.Yashik --exact
+# В новой оболочке:
+yashik --distro Ubuntu setup
+yashik --distro Ubuntu check .\yashik.yaml
+yashik --distro Ubuntu init .\yashik.yaml
+yashik --distro Ubuntu doctor
+```
+
+Без `--distro` используется дистрибутив WSL по умолчанию. `setup` устанавливает
+Linux Ящик из закреплённого релиза; для замены другой версии нужен
+`setup --force`. `init` и `check` принимают Windows-пути, включая относительные,
+или абсолютные Linux-пути. Все CLI, MCP, агенты, skills и rules устанавливаются
+внутри выбранного дистрибутива, где пользователь входит в сервисы.
+
+Для ручной установки Windows CLI скачайте ZIP своей архитектуры из
+[релиза](https://github.com/AlexGladkov/Yashik/releases/tag/v0.2.1), извлеките
+`yashik.exe` в отдельную папку и добавьте её в пользовательский PATH.
+Статус проверки WinGet и WSL указан в
 [distribution validation](docs/features/distribution/validation.md).
 
 ## Сборка из исходников
