@@ -1,0 +1,436 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    name: Version, format, lint, and tests
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check release version agreement
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          cargo_version = cargo["package"]["version"]
+          script = Path("scripts/install.sh").read_text(encoding="utf-8")
+          match = re.search(r"^DEFAULT_VERSION=(?:'([^']+)'|\"([^\"]+)\"|([^\s#]+))", script, re.MULTILINE)
+          if not match:
+              raise SystemExit("scripts/install.sh has no DEFAULT_VERSION assignment")
+          script_version = next(value for value in match.groups() if value is not None)
+          version_pattern = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+          if not re.fullmatch(version_pattern, cargo_version):
+              raise SystemExit(f"Cargo version is not a stable semantic version: {cargo_version}")
+          if script_version != cargo_version:
+              raise SystemExit(f"Cargo version {cargo_version} does not match install.sh DEFAULT_VERSION {script_version}")
+          if os.environ["GITHUB_EVENT_NAME"] == "push":
+              expected_tag = f"v{cargo_version}"
+              if os.environ["GITHUB_REF_NAME"] != expected_tag:
+                  raise SystemExit(f"tag {os.environ['GITHUB_REF_NAME']} does not match {expected_tag}")
+          print(f"version={cargo_version}")
+          PY
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy
+      - name: Check formatting
+        run: cargo +1.85.0 fmt --all -- --check
+      - name: Run strict Clippy
+        run: cargo +1.85.0 clippy --locked --all-targets -- -D warnings
+      - name: Run Linux checks
+        run: cargo +1.85.0 test --locked
+      - name: Run installer bootstrap tests on Python 3.11
+        run: python3.11 -m unittest discover -s tests -p test_install_script.py
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: release-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: yashik-linux-x86_64.tar.gz
+            host_arch: x86_64
+            linux: true
+            linker_env: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: yashik-linux-aarch64.tar.gz
+            host_arch: aarch64
+            linux: true
+            linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: yashik-macos-x86_64.tar.gz
+            host_arch: x86_64
+            linux: false
+            linker_env: none
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            asset: yashik-macos-aarch64.tar.gz
+            host_arch: arm64
+            linux: false
+            linker_env: none
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      TARGET: ${{ matrix.target }}
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Confirm native runner architecture
+        shell: bash
+        run: |
+          actual="$(uname -m)"
+          if [[ "$actual" != "$HOST_ARCH" ]]; then
+            echo "Expected native $HOST_ARCH runner, got $actual" >&2
+            exit 1
+          fi
+        env:
+          HOST_ARCH: ${{ matrix.host_arch }}
+      - name: Install Linux musl toolchain
+        if: matrix.linux
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Configure native musl linker
+        if: matrix.linux
+        run: echo "$LINKER_ENV=musl-gcc" >> "$GITHUB_ENV"
+        env:
+          LINKER_ENV: ${{ matrix.linker_env }}
+      - name: Install pinned Rust target
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup target add --toolchain 1.85.0 "$TARGET"
+      - name: Run native target tests
+        run: cargo +1.85.0 test --locked --target "$TARGET"
+      - name: Build optimized target binary
+        run: cargo +1.85.0 build --release --locked --target "$TARGET"
+      - name: Verify Linux binary is fully static
+        if: matrix.linux
+        shell: bash
+        run: |
+          binary="target/$TARGET/release/yashik"
+          if readelf -lW "$binary" | grep -q 'INTERP'; then
+            echo "ELF binary contains a dynamic interpreter" >&2
+            exit 1
+          fi
+          if readelf -dW "$binary" 2>/dev/null | grep -q 'NEEDED'; then
+            echo "ELF binary has dynamic shared-library dependencies" >&2
+            exit 1
+          fi
+      - name: Package and probe release archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          scripts/package-release.sh \
+            "target/$TARGET/release/yashik" \
+            "dist/$ASSET" \
+            "$RELEASE_VERSION"
+        env:
+          ASSET: ${{ matrix.asset }}
+      - name: Run installer against this native release archive
+        shell: bash
+        run: |
+          fixture="$RUNNER_TEMP/release-fixture"
+          mock_bin="$RUNNER_TEMP/mock-curl"
+          home="$RUNNER_TEMP/installer-home"
+          install_dir="$RUNNER_TEMP/installer-bin"
+          mkdir -p "$fixture" "$mock_bin" "$home"
+          cp "dist/$ASSET" "$fixture/$ASSET"
+          python3 - "$fixture/$ASSET" "$fixture/SHA256SUMS" "$ASSET" <<'PY'
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          archive = Path(sys.argv[1])
+          manifest = Path(sys.argv[2])
+          name = sys.argv[3]
+          manifest.write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {name}\n", encoding="ascii")
+          PY
+          cat > "$mock_bin/curl" <<'SH'
+          #!/bin/sh
+          set -eu
+          output=
+          url=
+          while [ "$#" -gt 0 ]; do
+            case "$1" in
+              --output)
+                [ "$#" -ge 2 ] || exit 2
+                output=$2
+                shift 2
+                continue
+                ;;
+              https://*) url=$1 ;;
+            esac
+            shift
+          done
+          [ -n "$output" ] && [ -n "$url" ] || exit 2
+          source="$YASHIK_FIXTURE_DIR/${url##*/}"
+          [ -f "$source" ] || exit 22
+          cp "$source" "$output"
+          SH
+          chmod 0755 "$mock_bin/curl"
+          output="$(PATH="$mock_bin:$PATH" YASHIK_FIXTURE_DIR="$fixture" HOME="$home" \
+            /bin/sh scripts/install.sh --bin-dir "$install_dir")"
+          printf '%s\n' "$output"
+          test "$("$install_dir/yashik" --version)" = "yashik $RELEASE_VERSION"
+          tar -xOzf "dist/$ASSET" yashik | cmp - "$install_dir/yashik"
+          repeated="$(PATH="$mock_bin:$PATH" YASHIK_FIXTURE_DIR="$fixture" HOME="$home" \
+            /bin/sh scripts/install.sh --bin-dir "$install_dir")"
+          printf '%s\n' "$repeated"
+          case "$repeated" in *"already installed"*) ;; *) exit 1 ;; esac
+        env:
+          ASSET: ${{ matrix.asset }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  brew-test:
+    name: Homebrew ${{ matrix.asset }}
+    needs:
+      - release-check
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset: yashik-linux-x86_64.tar.gz
+          - runner: ubuntu-24.04-arm
+            asset: yashik-linux-aarch64.tar.gz
+          - runner: macos-15-intel
+            asset: yashik-macos-x86_64.tar.gz
+          - runner: macos-15
+            asset: yashik-macos-aarch64.tar.gz
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all native archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: yashik-*.tar.gz
+          path: dist
+          merge-multiple: true
+      - name: Verify native release archive exists
+        run: test -f "dist/${{ matrix.asset }}"
+      - name: Create CI checksum manifest and production formula
+        run: |
+          cp scripts/install.sh dist/install.sh
+          python3 - <<'PY' > dist/SHA256SUMS
+          import hashlib
+          from pathlib import Path
+
+          names = sorted(["install.sh", *[path.name for path in Path("dist").glob("yashik-*.tar.gz")]])
+          for name in names:
+              digest = hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest()
+              print(f"{digest}  {name}")
+          PY
+          python3 scripts/generate-homebrew.py \
+            --version "$RELEASE_VERSION" \
+            --checksums dist/SHA256SUMS \
+            --output "$RUNNER_TEMP/production/yashik.rb"
+      - name: Install Homebrew on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 CI=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          echo /home/linuxbrew/.linuxbrew/sbin >> "$GITHUB_PATH"
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew --version
+      - name: Create local tap and audit production formula
+        shell: bash
+        run: |
+          brew tap-new --no-git yashik/ci
+          tap_dir="$(brew --repo yashik/ci)"
+          mkdir -p "$tap_dir/Formula"
+          cp "$RUNNER_TEMP/production/yashik.rb" "$tap_dir/Formula/yashik.rb"
+          HOMEBREW_NO_INSTALL_FROM_API=1 brew audit --strict yashik/ci/yashik
+      - name: Serve local release fixture
+        shell: bash
+        run: |
+          python3 -m http.server 18765 --bind 127.0.0.1 --directory dist > "$RUNNER_TEMP/yashik-fixture.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/yashik-fixture.pid"
+          for attempt in {1..40}; do
+            if curl --fail --silent http://127.0.0.1:18765/SHA256SUMS >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/yashik-fixture.log"
+          exit 1
+      - name: Install and test formula against native archive
+        shell: bash
+        run: |
+          trap 'kill "$(cat "$RUNNER_TEMP/yashik-fixture.pid")" 2>/dev/null || true' EXIT
+          python3 scripts/generate-homebrew.py \
+            --version "$RELEASE_VERSION" \
+            --checksums dist/SHA256SUMS \
+            --base-url http://127.0.0.1:18765 \
+            --output "$(brew --repo yashik/ci)/Formula/yashik.rb"
+          HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source yashik/ci/yashik
+          HOMEBREW_NO_INSTALL_FROM_API=1 brew test --verbose yashik/ci/yashik
+          test "$(brew list --versions yashik/ci/yashik | awk '{print $2}')" = "$RELEASE_VERSION"
+          "$(brew --prefix)/bin/yashik" --help >/dev/null
+
+  assemble:
+    name: Assemble release assets
+    needs:
+      - release-check
+      - build
+      - brew-test
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: yashik-*.tar.gz
+          path: dist
+          merge-multiple: true
+      - name: Build checksums and production formula
+        shell: bash
+        run: |
+          cp scripts/install.sh dist/install.sh
+          python3 - <<'PY' > dist/SHA256SUMS
+          import hashlib
+          from pathlib import Path
+
+          names = sorted(["install.sh", *[path.name for path in Path("dist").glob("yashik-*.tar.gz")]])
+          for name in names:
+              digest = hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest()
+              print(f"{digest}  {name}")
+          PY
+          python3 scripts/generate-homebrew.py \
+            --version "$RELEASE_VERSION" \
+            --checksums dist/SHA256SUMS \
+            --output dist/yashik.rb
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          import tomllib
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          script = Path("dist/install.sh").read_text(encoding="utf-8")
+          version_match = re.search(r"^DEFAULT_VERSION=(?:'([^']+)'|\"([^\"]+)\"|([^\s#]+))", script, re.MULTILINE)
+          if not version_match or next(value for value in version_match.groups() if value is not None) != cargo:
+              raise SystemExit("release installer DEFAULT_VERSION does not match the Cargo version")
+          checksums = Path("dist/SHA256SUMS").read_text(encoding="utf-8").splitlines()
+          expected = {
+              "install.sh",
+              "yashik-linux-x86_64.tar.gz",
+              "yashik-linux-aarch64.tar.gz",
+              "yashik-macos-x86_64.tar.gz",
+              "yashik-macos-aarch64.tar.gz",
+          }
+          seen = {}
+          for line in checksums:
+              match = re.fullmatch(r"([0-9a-f]{64})  ([^/\s]+)", line)
+              if not match:
+                  raise SystemExit(f"malformed checksum line: {line}")
+              digest, name = match.groups()
+              if name in seen:
+                  raise SystemExit(f"duplicate checksum entry: {name}")
+              seen[name] = digest
+          if set(seen) != expected:
+              raise SystemExit("SHA256SUMS must contain exactly the four release archives and install.sh")
+          for name in sorted(expected - {"install.sh"}):
+              if not (Path("dist") / name).is_file():
+                  raise SystemExit(f"missing release archive: {name}")
+          for line in Path("dist/yashik.rb").read_text(encoding="utf-8").splitlines():
+              if "releases/download/" in line and f"/v{cargo}/" not in line:
+                  raise SystemExit("Homebrew formula URL is not pinned to the Cargo release tag")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yashik-production-homebrew-formula
+          path: dist/yashik.rb
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yashik-release-assets
+          path: |
+            dist/yashik-linux-x86_64.tar.gz
+            dist/yashik-linux-aarch64.tar.gz
+            dist/yashik-macos-x86_64.tar.gz
+            dist/yashik-macos-aarch64.tar.gz
+            dist/SHA256SUMS
+            dist/install.sh
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    name: Create or update draft release
+    needs: assemble
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: yashik-release-assets
+          path: dist
+      - name: Create or update draft without replacing a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != true ]]; then
+              echo "Release $RELEASE_TAG is already published; leaving it unchanged."
+              exit 0
+            fi
+            gh release upload "$RELEASE_TAG" \
+              dist/yashik-linux-x86_64.tar.gz \
+              dist/yashik-linux-aarch64.tar.gz \
+              dist/yashik-macos-x86_64.tar.gz \
+              dist/yashik-macos-aarch64.tar.gz \
+              dist/SHA256SUMS dist/install.sh --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/yashik-linux-x86_64.tar.gz \
+              dist/yashik-linux-aarch64.tar.gz \
+              dist/yashik-macos-x86_64.tar.gz \
+              dist/yashik-macos-aarch64.tar.gz \
+              dist/SHA256SUMS dist/install.sh \
+              --draft --verify-tag --title "$RELEASE_TAG" \
+              --notes "Draft release for Yashik $RELEASE_TAG."
+          fi

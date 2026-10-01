@@ -22,7 +22,7 @@ impl TestDir {
         let path =
             std::env::temp_dir().join(format!("yashik-engine-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&path).expect("create test directory");
-        Self(path)
+        Self(fs::canonicalize(path).expect("canonicalize test directory"))
     }
 
     fn path(&self) -> &Path {
@@ -36,8 +36,50 @@ impl Drop for TestDir {
     }
 }
 
+fn test_paths(root: &Path) -> Paths {
+    let root = fs::canonicalize(root).expect("canonicalize test root");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let home = fs::canonicalize(home).unwrap();
+
+    #[cfg(target_os = "macos")]
+    let (data, cache, state, bin) = (
+        home.join("Library/Application Support/yashik"),
+        home.join("Library/Caches/yashik"),
+        home.join("Library/Application Support/yashik/state"),
+        home.join("Library/Application Support/yashik/bin"),
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    let (data, cache, state, bin) = (
+        root.join("xdg-data/yashik"),
+        root.join("xdg-cache/yashik"),
+        root.join("xdg-state/yashik"),
+        home.join(".local/bin"),
+    );
+
+    Paths {
+        home,
+        data,
+        cache,
+        state,
+        bin,
+    }
+}
+
+fn configure_child_paths(command: &mut Command, root: &Path) {
+    let root = fs::canonicalize(root).expect("canonicalize test root");
+    let paths = test_paths(&root);
+    command
+        .env("HOME", &paths.home)
+        .env("USERPROFILE", &paths.home)
+        .env("XDG_DATA_HOME", root.join("xdg-data"))
+        .env("XDG_CACHE_HOME", root.join("xdg-cache"))
+        .env("XDG_STATE_HOME", root.join("xdg-state"));
+}
+
 fn write_launch_spec(root: &Path, launch_id: &str, spec: &LaunchSpec) {
-    let state = root.join("xdg-state/yashik");
+    let state = test_paths(root).state;
     let directory = state.join("launch-specs");
     fs::create_dir_all(&directory).unwrap();
     fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
@@ -48,17 +90,11 @@ fn write_launch_spec(root: &Path, launch_id: &str, spec: &LaunchSpec) {
 }
 
 fn launch(root: &Path, launch_id: &str, marker: Option<&str>) -> Output {
-    let home = root.join("home");
-    fs::create_dir_all(&home).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_yashik"));
     command
         .args(["mcp-launch", launch_id])
-        .env("HOME", home)
-        .env("USERPROFILE", root.join("home"))
-        .env("XDG_DATA_HOME", root.join("xdg-data"))
-        .env("XDG_CACHE_HOME", root.join("xdg-cache"))
-        .env("XDG_STATE_HOME", root.join("xdg-state"))
         .env("CAPTURE_PATH", root.join("capture.txt"));
+    configure_child_paths(&mut command, root);
     match marker {
         Some(marker) => {
             command.env("YASHIK_TEST_MCP_SECRET_68C4", marker);
@@ -71,21 +107,15 @@ fn launch(root: &Path, launch_id: &str, marker: Option<&str>) -> Output {
 }
 
 fn doctor(root: &Path, missing_env: &str, marker: &str) -> Output {
-    let home = root.join("home");
-    fs::create_dir_all(&home).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_yashik"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_yashik"));
+    command
         .arg("doctor")
         .current_dir(root)
-        .env("HOME", home)
-        .env("USERPROFILE", root.join("home"))
-        .env("XDG_DATA_HOME", root.join("xdg-data"))
-        .env("XDG_CACHE_HOME", root.join("xdg-cache"))
-        .env("XDG_STATE_HOME", root.join("xdg-state"))
         .env("DOCTOR_SECRET_MARKER", marker)
         .env("API_TOKEN", marker)
-        .env_remove(missing_env)
-        .output()
-        .expect("run doctor")
+        .env_remove(missing_env);
+    configure_child_paths(&mut command, root);
+    command.output().expect("run doctor")
 }
 
 #[derive(Serialize)]
@@ -99,7 +129,7 @@ struct LaunchIdentity<'a> {
 fn doctor_lists_missing_mcp_environment_names_without_values() {
     let temp = TestDir::new();
     let root = temp.path();
-    let home = root.join("home");
+    let paths = test_paths(root);
     let binding_id = "codex/mcp/private-service";
     let artifact_key = "private-artifact";
     let command_env = "YASHIK_DOCTOR_COMMAND_MISSING_7F21";
@@ -127,13 +157,6 @@ fn doctor_lists_missing_mcp_environment_names_without_values() {
     };
     write_launch_spec(root, &launch_id, &spec);
 
-    let paths = Paths {
-        home: home.clone(),
-        data: root.join("xdg-data/yashik"),
-        cache: root.join("xdg-cache/yashik"),
-        state: root.join("xdg-state/yashik"),
-        bin: home.join(".local/bin"),
-    };
     let mut state = State::empty();
     state.bindings.insert(
         binding_id.to_owned(),
@@ -165,14 +188,8 @@ fn doctor_lists_missing_mcp_environment_names_without_values() {
 fn doctor_runs_only_the_curated_version_probe_and_discards_stderr() {
     let temp = TestDir::new();
     let root = temp.path();
-    let home = root.join("home");
-    let paths = Paths {
-        home: home.clone(),
-        data: root.join("xdg-data/yashik"),
-        cache: root.join("xdg-cache/yashik"),
-        state: root.join("xdg-state/yashik"),
-        bin: home.join(".local/bin"),
-    };
+    let paths = test_paths(root);
+    let home = paths.home.clone();
     let internal = paths.data.join("harnesses/codex/1.2.3/bin/codex");
     fs::create_dir_all(internal.parent().unwrap()).unwrap();
     fs::create_dir_all(&paths.bin).unwrap();

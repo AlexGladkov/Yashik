@@ -7,10 +7,45 @@
 изменения машины, `doctor` проверяет записанное окружение без переустановки.
 Пользователь самостоятельно входит в Codex, Claude и другие сервисы.
 
-## Сборка
+## Установка
 
-Для сборки нужен Rust и доступ к crates.io. На Linux также нужен системный
-linker, например `build-essential` на Ubuntu:
+Linux и macOS, x86_64 и ARM64:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/AlexGladkov/Yashik/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Скрипт устанавливает только Ящик в `~/.local/bin`, проверяет SHA-256 архива и
+не изменяет shell-профиль. Rust не нужен. Для другой папки используйте
+`sh -s -- --bin-dir /absolute/path`. Повторная установка идентичного бинарника
+не меняет его; для замены другой версии нужен `--force`.
+
+Homebrew:
+
+```sh
+brew install AlexGladkov/tap/yashik
+```
+
+Закреплённая версия:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1/install.sh | \
+  sh -s -- --version 0.2.1
+```
+
+Скрипт каждого релиза содержит собственную версию по умолчанию: архив и
+контрольные суммы скачиваются из одного закреплённого релиза. Архивы для Linux
+собираются со статической musl, для macOS — с deployment target 13.0.
+Результаты реальных проверок платформ описаны в
+[distribution validation](docs/features/distribution/validation.md).
+
+## Сборка из исходников
+
+Нужны Rust 1.85 или новее и доступ к crates.io. На Ubuntu также нужен linker,
+например из `build-essential`:
 
 ```sh
 cargo build --release --locked
@@ -18,9 +53,6 @@ mkdir -p ~/.local/bin
 install -m 755 target/release/yashik ~/.local/bin/yashik
 export PATH="$HOME/.local/bin:$PATH"
 ```
-
-Это способ сборки из исходников. Готовый release-однострочник для установки
-самого Ящика пока не опубликован.
 
 ## Простой тест: Codex и агенты VoltAgent
 

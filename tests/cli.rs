@@ -13,7 +13,7 @@ impl TestDir {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("yashik-cli-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&path).expect("create test directory");
-        Self(path)
+        Self(fs::canonicalize(path).expect("canonicalize test directory"))
     }
 
     fn path(&self) -> &Path {
@@ -30,6 +30,8 @@ impl Drop for TestDir {
 fn run(root: &Path, args: &[&str]) -> Output {
     let home = root.join("home");
     fs::create_dir_all(&home).unwrap();
+    let root = fs::canonicalize(root).unwrap();
+    let home = fs::canonicalize(home).unwrap();
     Command::new(env!("CARGO_BIN_EXE_yashik"))
         .args(args)
         .env("HOME", &home)
@@ -39,6 +41,42 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .env("XDG_STATE_HOME", root.join("xdg-state"))
         .output()
         .expect("run yashik")
+}
+
+fn assert_no_install_state(root: &Path) {
+    let root = fs::canonicalize(root).unwrap();
+    #[cfg(target_os = "macos")]
+    let home = fs::canonicalize(root.join("home")).unwrap();
+
+    #[cfg(target_os = "macos")]
+    let (data, cache, state) = (
+        home.join("Library/Application Support/yashik"),
+        home.join("Library/Caches/yashik"),
+        home.join("Library/Application Support/yashik/state"),
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    let (data, cache, state) = (
+        root.join("xdg-data/yashik"),
+        root.join("xdg-cache/yashik"),
+        root.join("xdg-state/yashik"),
+    );
+
+    assert!(
+        !data.exists(),
+        "unexpected installer data at {}",
+        data.display()
+    );
+    assert!(
+        !cache.exists(),
+        "unexpected installer cache at {}",
+        cache.display()
+    );
+    assert!(
+        !state.exists(),
+        "unexpected installer state at {}",
+        state.display()
+    );
 }
 
 #[test]
@@ -65,9 +103,7 @@ fn check_validates_effective_resources_without_creating_install_state() {
     assert!(stdout.contains("codex (CLI version: latest)"));
     assert!(stdout.contains("Skills: sample"));
     assert_eq!(fs::read(home.join("existing.txt")).unwrap(), b"keep");
-    assert!(!temp.path().join("xdg-data/yashik").exists());
-    assert!(!temp.path().join("xdg-cache/yashik").exists());
-    assert!(!temp.path().join("xdg-state/yashik").exists());
+    assert_no_install_state(temp.path());
 }
 
 #[test]
@@ -86,7 +122,7 @@ fn doctor_on_empty_state_is_read_only() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("read-only"));
     assert!(stdout.contains("No recorded Yashik installation"));
-    assert!(!temp.path().join("xdg-state/yashik").exists());
+    assert_no_install_state(temp.path());
     assert_eq!(fs::read(home.join("existing.txt")).unwrap(), b"keep");
 }
 
@@ -112,9 +148,7 @@ fn init_rejects_literal_env_values_without_leaking_them_or_writing_state() {
     );
     assert!(!combined.contains(secret));
     assert!(combined.contains("run.env values must be a single"));
-    assert!(!temp.path().join("xdg-data/yashik").exists());
-    assert!(!temp.path().join("xdg-cache/yashik").exists());
-    assert!(!temp.path().join("xdg-state/yashik").exists());
+    assert_no_install_state(temp.path());
 }
 
 #[test]
@@ -131,9 +165,7 @@ fn init_rejects_malformed_cli_version_before_creating_private_paths() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("must be `latest` or an exact semantic version"));
-    assert!(!temp.path().join("xdg-data/yashik").exists());
-    assert!(!temp.path().join("xdg-cache/yashik").exists());
-    assert!(!temp.path().join("xdg-state/yashik").exists());
+    assert_no_install_state(temp.path());
 }
 
 #[test]
@@ -149,9 +181,7 @@ fn init_rejects_unsafe_runtime_and_git_requirements_before_private_writes() {
         fs::write(&manifest, contents).unwrap();
         let output = run(temp.path(), &["init", manifest.to_str().unwrap()]);
         assert!(!output.status.success());
-        assert!(!temp.path().join("xdg-data/yashik").exists());
-        assert!(!temp.path().join("xdg-cache/yashik").exists());
-        assert!(!temp.path().join("xdg-state/yashik").exists());
+        assert_no_install_state(temp.path());
     }
 }
 
@@ -175,7 +205,7 @@ fn internal_launcher_rejects_path_like_ids_before_reading_state() {
     let output = run(temp.path(), &["mcp-launch", "../../etc/passwd"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("invalid launch identifier"));
-    assert!(!temp.path().join("xdg-state/yashik").exists());
+    assert_no_install_state(temp.path());
 }
 
 #[test]
@@ -184,5 +214,5 @@ fn help_and_version_are_available() {
     assert!(run(temp.path(), &["--help"]).status.success());
     let version = run(temp.path(), &["--version"]);
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("yashik 0.2.0"));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("yashik 0.2.1"));
 }
