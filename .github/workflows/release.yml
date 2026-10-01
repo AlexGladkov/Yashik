@@ -372,15 +372,30 @@ jobs:
             winget install --manifest $localManifests --accept-source-agreements --accept-package-agreements --disable-interactivity
             if ($LASTEXITCODE -ne 0) { throw 'WinGet portable installation failed' }
             $links = Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links'
-            $alias = Get-ChildItem -Path $links -Filter 'yashik*' -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -eq $alias) { throw 'WinGet did not install the yashik portable command alias' }
-            $reported = (& $alias.FullName --version | Out-String).Trim()
+            $alias = Join-Path $links 'yashik.exe'
+            if (-not (Test-Path -LiteralPath $alias -PathType Leaf)) { throw 'WinGet did not install the exact yashik.exe portable command alias' }
+
+            $pathEntries = [System.Collections.Generic.List[string]]::new()
+            foreach ($pathValue in @(
+              [Environment]::GetEnvironmentVariable('PATH', 'User'),
+              [Environment]::GetEnvironmentVariable('PATH', 'Machine'),
+              $env:PATH,
+              $links
+            )) {
+              foreach ($entry in ($pathValue -split ';')) {
+                $entry = $entry.Trim()
+                if ($entry -and -not $pathEntries.Contains($entry)) { $pathEntries.Add($entry) }
+              }
+            }
+            $env:PATH = $pathEntries -join ';'
+            $env:YASHIK_EXPECTED_ALIAS = $alias
+            $probe = '$command = Get-Command yashik -CommandType Application -ErrorAction Stop; if ($command.Source -ine $env:YASHIK_EXPECTED_ALIAS) { throw "Bare yashik resolved to unexpected path: $($command.Source)" }; yashik --version'
+            $reported = (& pwsh.exe -NoProfile -Command $probe | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { throw 'A fresh PowerShell process could not resolve the bare yashik command alias' }
             if ($reported -ne "yashik $env:RELEASE_VERSION") { throw "Portable alias returned unexpected version: $reported" }
-            & $alias.FullName --help | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Portable alias --help probe failed' }
             winget uninstall --id AlexGladkov.Yashik --exact --disable-interactivity
             if ($LASTEXITCODE -ne 0) { throw 'WinGet portable uninstall failed' }
-            if (Test-Path $alias.FullName) { throw 'WinGet left the portable command alias after uninstall' }
+            if (Test-Path -LiteralPath $alias) { throw 'WinGet left the exact yashik.exe portable command alias after uninstall' }
           } finally {
             if ($null -ne $server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
           }
@@ -409,7 +424,8 @@ jobs:
           $distro = 'YashikCI'
           $root = Join-Path $env:RUNNER_TEMP 'yashik-wsl1'
           $installLocation = Join-Path $root 'distro'
-          $rootfs = Join-Path $root 'ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz'
+          $rootfsName = 'ubuntu-base-24.04.5-base-amd64.tar.gz'
+          $rootfs = Join-Path $root $rootfsName
           $sums = Join-Path $root 'SHA256SUMS'
           $imported = $false
           New-Item -ItemType Directory -Force $root | Out-Null
@@ -418,19 +434,19 @@ jobs:
               Write-Host '::notice::WSL1 unavailable on this hosted runner; real WSL smoke remains unverified.'
               exit 0
             }
-            $base = 'https://cloud-images.ubuntu.com/wsl/noble/current'
+            $base = 'https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.5/release'
             try {
               Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums
-              Invoke-WebRequest -Uri "$base/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz" -OutFile $rootfs
+              Invoke-WebRequest -Uri "$base/$rootfsName" -OutFile $rootfs
             } catch {
-              Write-Host "::notice::Could not download the official Ubuntu WSL1 fixture: $($_.Exception.Message)"
+              Write-Host "::notice::Could not download the official Ubuntu Base 24.04.5 WSL1 fixture: $($_.Exception.Message)"
               exit 0
             }
-            $line = Get-Content $sums | Where-Object { $_ -match 'ubuntu-noble-wsl-amd64-wsl\.rootfs\.tar\.gz$' }
-            if (@($line).Count -ne 1) { throw 'Ubuntu SHA256SUMS does not have exactly one rootfs entry' }
+            $line = Get-Content $sums | Where-Object { $_ -match ('\*?' + [regex]::Escape($rootfsName) + '$') }
+            if (@($line).Count -ne 1) { throw 'Ubuntu Base SHA256SUMS does not have exactly one rootfs entry' }
             $expected = ($line -split '\s+')[0].ToLowerInvariant()
             $actual = (Get-FileHash -Algorithm SHA256 $rootfs).Hash.ToLowerInvariant()
-            if ($actual -ne $expected) { throw 'Ubuntu WSL rootfs SHA-256 did not match its official manifest' }
+            if ($actual -ne $expected) { throw 'Ubuntu Base rootfs SHA-256 did not match its official manifest' }
             Write-Host "Verified official Ubuntu rootfs SHA256 $actual"
             New-Item -ItemType Directory -Force $installLocation | Out-Null
             & wsl.exe --import $distro $installLocation $rootfs --version 1

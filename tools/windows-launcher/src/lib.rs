@@ -313,7 +313,7 @@ fn selected_distro(
         command_args(WSL_VERBOSE_LIST),
         "could not determine the default WSL distribution",
     )?;
-    let default_name = parse_default_distro(&verbose.stdout)
+    let default_name = parse_default_distro(&verbose.stdout, &names)
         .ok_or_else(|| "no default WSL distribution is configured; set one with `wsl --set-default NAME` or pass `--distro NAME`".to_owned())?;
     names
         .iter()
@@ -511,50 +511,31 @@ fn parse_distro_names(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-fn parse_default_distro(bytes: &[u8]) -> Option<String> {
+fn parse_default_distro(bytes: &[u8], registered_names: &[String]) -> Option<String> {
     for line in decode_wsl_text(bytes).lines() {
         let line = line.trim_start();
         let Some(columns) = line.strip_prefix('*') else {
             continue;
         };
         let columns = columns.trim_start();
-        if columns.is_empty() || columns.starts_with("NAME ") {
-            continue;
-        }
-        let Some(name) = name_before_state(columns) else {
-            continue;
-        };
-        if !name.is_empty() {
-            return Some(name.to_owned());
+        if let Some(name) = registered_names
+            .iter()
+            .filter(|name| {
+                let Some(suffix) = columns.strip_prefix(name.as_str()) else {
+                    return false;
+                };
+                if !suffix.chars().next().is_some_and(char::is_whitespace) {
+                    return false;
+                }
+                let suffix_columns = suffix.split_whitespace().collect::<Vec<_>>();
+                matches!(suffix_columns.last(), Some(&"1" | &"2")) && suffix_columns.len() >= 2
+            })
+            .max_by_key(|name| name.len())
+        {
+            return Some(name.clone());
         }
     }
     None
-}
-
-fn name_before_state(row: &str) -> Option<&str> {
-    const STATES: &[&str] = &[
-        "Running",
-        "Stopped",
-        "Installing",
-        "Uninstalling",
-        "Converting",
-        "Starting",
-        "Terminating",
-    ];
-    let row = row.trim_end();
-    let version_start = row.rfind(char::is_whitespace)?;
-    let version = row[version_start..].trim();
-    if version.parse::<u32>().is_err() {
-        return None;
-    }
-
-    let name_and_state = row[..version_start].trim_end();
-    let state_start = name_and_state.rfind(char::is_whitespace)?;
-    let state = name_and_state[state_start..].trim();
-    if !STATES.contains(&state) {
-        return None;
-    }
-    Some(name_and_state[..state_start].trim_end())
 }
 
 fn decode_wsl_text(bytes: &[u8]) -> String {
@@ -721,16 +702,27 @@ mod tests {
         assert_eq!(names, vec!["Ubuntu Dev", "Debian"]);
         let verbose = utf16("  NAME                 STATE           VERSION\r\n* Ubuntu Dev           Stopped         2\r\n  Debian               Running         2\r\n");
         assert_eq!(
-            parse_default_distro(&verbose).as_deref(),
+            parse_default_distro(&verbose, &names).as_deref(),
             Some("Ubuntu Dev")
         );
     }
 
     #[test]
     fn parses_default_distribution_name_containing_a_state_word() {
+        let names = vec!["Ubuntu".to_owned(), "Ubuntu Stopped Dev".to_owned()];
         let verbose = b"NAME                 STATE           VERSION\n* Ubuntu Stopped Dev    Stopped         2\n";
         assert_eq!(
-            parse_default_distro(verbose).as_deref(),
+            parse_default_distro(verbose, &names).as_deref(),
+            Some("Ubuntu Stopped Dev")
+        );
+    }
+
+    #[test]
+    fn parses_default_distribution_with_a_localized_state_column() {
+        let names = vec!["Ubuntu Stopped Dev".to_owned()];
+        let verbose = "NAME                 STATE           VERSION\n* Ubuntu Stopped Dev    Остановлен      2\n";
+        assert_eq!(
+            parse_default_distro(verbose.as_bytes(), &names).as_deref(),
             Some("Ubuntu Stopped Dev")
         );
     }
@@ -826,7 +818,7 @@ mod tests {
         wsl.queue(successful(
             b"/mnt/c/temp/space $ & ' manifest.yaml\n".to_vec(),
         ));
-        let args = ["check", manifest.to_str().unwrap()].map(OsString::from);
+        let args = ["--distro", "Ubuntu", "check", manifest.to_str().unwrap()].map(OsString::from);
         assert_eq!(run(&args, &mut wsl), Ok(Outcome::Exit(0)));
         let conversion_call = wsl
             .capture_args

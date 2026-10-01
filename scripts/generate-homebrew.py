@@ -17,6 +17,10 @@ ASSETS = {
     "linux-intel": "yashik-linux-x86_64.tar.gz",
 }
 CHECKSUM_FILES = {*ASSETS.values(), "install.sh"}
+OPTIONAL_CHECKSUM_FILES = {
+    "yashik-windows-x86_64.zip",
+    "yashik-windows-aarch64.zip",
+}
 VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 CHECKSUM_RE = re.compile(r"^([0-9a-fA-F]{64}) [ *]([^\s/]+)$")
 PRODUCTION_BASE = "https://github.com/AlexGladkov/Yashik/releases/download"
@@ -42,7 +46,7 @@ def parse_checksums(path: Path) -> dict[str, str]:
         checksums[filename] = digest.lower()
 
     missing = sorted(CHECKSUM_FILES - checksums.keys())
-    unexpected = sorted(checksums.keys() - CHECKSUM_FILES)
+    unexpected = sorted(checksums.keys() - CHECKSUM_FILES - OPTIONAL_CHECKSUM_FILES)
     if missing:
         raise ValueError(f"checksum manifest is missing: {', '.join(missing)}")
     if unexpected:
