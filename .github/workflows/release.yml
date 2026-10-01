@@ -32,6 +32,8 @@ jobs:
 
           cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
           cargo_version = cargo["package"]["version"]
+          windows = tomllib.loads(Path("tools/windows-launcher/Cargo.toml").read_text(encoding="utf-8"))
+          windows_version = windows["package"]["version"]
           script = Path("scripts/install.sh").read_text(encoding="utf-8")
           match = re.search(r"^DEFAULT_VERSION=(?:'([^']+)'|\"([^\"]+)\"|([^\s#]+))", script, re.MULTILINE)
           if not match:
@@ -42,6 +44,8 @@ jobs:
               raise SystemExit(f"Cargo version is not a stable semantic version: {cargo_version}")
           if script_version != cargo_version:
               raise SystemExit(f"Cargo version {cargo_version} does not match install.sh DEFAULT_VERSION {script_version}")
+          if windows_version != cargo_version:
+              raise SystemExit(f"Windows bridge version {windows_version} does not match Cargo version {cargo_version}")
           if os.environ["GITHUB_EVENT_NAME"] == "push":
               expected_tag = f"v{cargo_version}"
               if os.environ["GITHUB_REF_NAME"] != expected_tag:
@@ -58,6 +62,16 @@ jobs:
         run: cargo +1.88.0 test --locked
       - name: Run installer bootstrap tests on Python 3.11
         run: python3.11 -m unittest discover -s tests -p test_install_script.py
+      - name: Check Windows bridge formatting
+        run: cargo +1.88.0 fmt --manifest-path tools/windows-launcher/Cargo.toml -- --check
+      - name: Run Windows bridge tests on Linux
+        run: cargo +1.88.0 test --locked --manifest-path tools/windows-launcher/Cargo.toml
+      - name: Lint Windows bridge
+        run: cargo +1.88.0 clippy --locked --manifest-path tools/windows-launcher/Cargo.toml --all-targets -- -D warnings
+      - name: Run release packaging and WinGet generator tests on Python 3.11
+        run: python3.11 -m unittest discover -s tests -p test_windows_release.py
+      - name: Test Homebrew formula release URL behavior
+        run: python3.11 -m unittest discover -s tests -p test_homebrew_generator.py
 
   build:
     name: Build ${{ matrix.asset }}
@@ -210,6 +224,252 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows-build:
+    name: Build ${{ matrix.asset }}
+    needs: release-check
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            architecture: x86_64
+            asset: yashik-windows-x86_64.zip
+            native_tests: true
+          - target: aarch64-pc-windows-msvc
+            architecture: aarch64
+            asset: yashik-windows-aarch64.zip
+            native_tests: false
+    env:
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ARCHITECTURE: ${{ matrix.architecture }}
+      ASSET: ${{ matrix.asset }}
+      NATIVE_TESTS: ${{ matrix.native_tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC for ARM64 cross-build
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+      - name: Confirm native Windows runner architecture
+        if: matrix.native_tests
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+            throw "Expected x64 Windows runner, got $env:PROCESSOR_ARCHITECTURE"
+          }
+      - name: Install pinned Rust toolchain and target
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to install Rust 1.88.0' }
+          rustup target add --toolchain 1.88.0 $env:TARGET
+          if ($LASTEXITCODE -ne 0) { throw "Unable to install Rust target $env:TARGET" }
+      - name: Check Windows bridge formatting
+        shell: pwsh
+        run: cargo +1.88.0 fmt --manifest-path tools/windows-launcher/Cargo.toml -- --check
+      - name: Run native x64 tests and strict Clippy
+        if: matrix.native_tests
+        shell: pwsh
+        run: |
+          cargo +1.88.0 test --locked --manifest-path tools/windows-launcher/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Windows bridge tests failed' }
+          cargo +1.88.0 clippy --locked --manifest-path tools/windows-launcher/Cargo.toml --all-targets -- -D warnings
+      - name: Build optimized Windows bridge
+        shell: pwsh
+        run: cargo +1.88.0 build --release --locked --manifest-path tools/windows-launcher/Cargo.toml --target $env:TARGET
+      - name: Package and probe Windows ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $arguments = @(
+            'scripts/package-windows.py',
+            '--binary', "tools/windows-launcher/target/$env:TARGET/release/yashik.exe",
+            '--output', "dist/$env:ASSET",
+            '--version', $env:RELEASE_VERSION,
+            '--architecture', $env:ARCHITECTURE
+          )
+          if ($env:NATIVE_TESTS -eq 'true') { $arguments += '--run-probes' }
+          python @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Windows ZIP packaging or verification failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  winget-validation:
+    name: Validate WinGet manifests and portable install
+    needs:
+      - release-check
+      - windows-build
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: yashik-windows-*.zip
+          path: dist
+          merge-multiple: true
+      - name: Generate exact WinGet manifests from packaged ZIP hashes
+        shell: pwsh
+        run: |
+          $lines = foreach ($file in Get-ChildItem dist/yashik-windows-*.zip | Sort-Object Name) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Encoding ascii dist/SHA256SUMS
+          $manifestDir = "manifests/a/AlexGladkov/Yashik/$env:RELEASE_VERSION"
+          python scripts/generate-winget.py --version $env:RELEASE_VERSION --checksums dist/SHA256SUMS --output-dir $manifestDir
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet manifest generation failed' }
+          "MANIFEST_DIR=$manifestDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Validate production manifests with WinGet
+        shell: pwsh
+        run: |
+          $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+          if ($null -eq $winget) { throw 'Windows 2025 runner is expected to provide the WinGet client' }
+          winget --version
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet client could not start' }
+          winget validate --manifest $env:MANIFEST_DIR --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw 'WinGet rejected the production manifests' }
+      - name: Install and uninstall x64 portable package through WinGet
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          winget settings --enable LocalManifestFiles
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enable local manifest installation for the isolated runner' }
+          $fixture = Join-Path $env:RUNNER_TEMP 'yashik-winget-http'
+          New-Item -ItemType Directory -Force $fixture | Out-Null
+          Copy-Item dist/yashik-windows-*.zip $fixture
+          $server = Start-Process -FilePath python -ArgumentList @('-m', 'http.server', '18766', '--bind', '127.0.0.1', '--directory', $fixture) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'yashik-http.out') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'yashik-http.err')
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri 'http://127.0.0.1:18766/yashik-windows-x86_64.zip' -Method Head -TimeoutSec 2 | Out-Null
+                $ready = $true
+                break
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Local WinGet fixture server did not become ready' }
+            $localManifests = Join-Path $env:RUNNER_TEMP 'yashik-winget-local-manifests'
+            New-Item -ItemType Directory -Force $localManifests | Out-Null
+            Copy-Item "$env:MANIFEST_DIR/*" $localManifests -Recurse
+            $installerManifest = Join-Path $localManifests 'AlexGladkov.Yashik.installer.yaml'
+            $installerYaml = Get-Content -Raw $installerManifest
+            $installerYaml = $installerYaml.Replace('https://github.com/AlexGladkov/Yashik/releases/download/v' + $env:RELEASE_VERSION, 'http://127.0.0.1:18766')
+            Set-Content -Path $installerManifest -Value $installerYaml -Encoding utf8
+            winget install --manifest $localManifests --accept-source-agreements --accept-package-agreements --disable-interactivity
+            if ($LASTEXITCODE -ne 0) { throw 'WinGet portable installation failed' }
+            $links = Join-Path $env:LOCALAPPDATA 'Microsoft/WinGet/Links'
+            $alias = Get-ChildItem -Path $links -Filter 'yashik*' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $alias) { throw 'WinGet did not install the yashik portable command alias' }
+            $reported = (& $alias.FullName --version | Out-String).Trim()
+            if ($reported -ne "yashik $env:RELEASE_VERSION") { throw "Portable alias returned unexpected version: $reported" }
+            & $alias.FullName --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Portable alias --help probe failed' }
+            winget uninstall --id AlexGladkov.Yashik --exact --disable-interactivity
+            if ($LASTEXITCODE -ne 0) { throw 'WinGet portable uninstall failed' }
+            if (Test-Path $alias.FullName) { throw 'WinGet left the portable command alias after uninstall' }
+          } finally {
+            if ($null -ne $server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+  windows-wsl1-smoke:
+    name: Attempt isolated WSL1 bridge smoke
+    needs:
+      - release-check
+      - build
+      - windows-build
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: yashik-*
+          path: dist
+          merge-multiple: true
+      - name: Import verified official Ubuntu rootfs as an isolated WSL1 distro
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $distro = 'YashikCI'
+          $root = Join-Path $env:RUNNER_TEMP 'yashik-wsl1'
+          $installLocation = Join-Path $root 'distro'
+          $rootfs = Join-Path $root 'ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz'
+          $sums = Join-Path $root 'SHA256SUMS'
+          $imported = $false
+          New-Item -ItemType Directory -Force $root | Out-Null
+          try {
+            if ($null -eq (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+              Write-Host '::notice::WSL1 unavailable on this hosted runner; real WSL smoke remains unverified.'
+              exit 0
+            }
+            $base = 'https://cloud-images.ubuntu.com/wsl/noble/current'
+            try {
+              Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $sums
+              Invoke-WebRequest -Uri "$base/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz" -OutFile $rootfs
+            } catch {
+              Write-Host "::notice::Could not download the official Ubuntu WSL1 fixture: $($_.Exception.Message)"
+              exit 0
+            }
+            $line = Get-Content $sums | Where-Object { $_ -match 'ubuntu-noble-wsl-amd64-wsl\.rootfs\.tar\.gz$' }
+            if (@($line).Count -ne 1) { throw 'Ubuntu SHA256SUMS does not have exactly one rootfs entry' }
+            $expected = ($line -split '\s+')[0].ToLowerInvariant()
+            $actual = (Get-FileHash -Algorithm SHA256 $rootfs).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw 'Ubuntu WSL rootfs SHA-256 did not match its official manifest' }
+            Write-Host "Verified official Ubuntu rootfs SHA256 $actual"
+            New-Item -ItemType Directory -Force $installLocation | Out-Null
+            & wsl.exe --import $distro $installLocation $rootfs --version 1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::notice::WSL1 import is not usable on this host (exit $LASTEXITCODE); real WSL smoke remains unverified."
+              exit 0
+            }
+            $imported = $true
+            $bridgeDir = Join-Path $root 'bridge'
+            Expand-Archive dist/yashik-windows-x86_64.zip $bridgeDir
+            $bridge = Join-Path $bridgeDir 'yashik.exe'
+            $reported = (& $bridge --version | Out-String).Trim()
+            if ($reported -ne "yashik $env:RELEASE_VERSION") { throw "Windows bridge reports unexpected version: $reported" }
+            $archive = (Resolve-Path dist/yashik-linux-x86_64.tar.gz).Path
+            $linuxArchive = (& wsl.exe --distribution $distro --exec wslpath -a -u $archive | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $linuxArchive.StartsWith('/')) { throw 'WSL could not convert the Linux archive path' }
+            $installScript = 'set -eu; mkdir -p "$HOME/.local/bin"; tar -xOzf "$1" yashik > "$HOME/.local/bin/yashik"; chmod 0755 "$HOME/.local/bin/yashik"'
+            & wsl.exe --distribution $distro --exec sh -c $installScript yashik-ci $linuxArchive
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install the release Linux binary into the temporary distro' }
+            & wsl.exe --set-default $distro
+            if ($LASTEXITCODE -ne 0) { throw 'Could not select the temporary WSL distro as default' }
+            $doctor = (& $bridge doctor 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0 -or $doctor -notmatch 'No recorded Yashik installation') { throw "WSL1 doctor smoke failed: $doctor" }
+            $manifest = Join-Path $root 'manifest space $ & '' λ.yaml'
+            Set-Content -Path $manifest -Encoding utf8 -Value "version: 1`nharnesses: {}"
+            & $bridge check $manifest
+            if ($LASTEXITCODE -ne 0) { throw 'WSL1 bridge failed to convert and check a Windows manifest path' }
+            & $bridge init $manifest
+            if ($LASTEXITCODE -ne 0) { throw 'WSL1 bridge init failed' }
+            & $bridge doctor
+            if ($LASTEXITCODE -ne 0) { throw 'WSL1 bridge doctor failed after init' }
+            & $bridge init $manifest
+            if ($LASTEXITCODE -ne 0) { throw 'WSL1 bridge rerun failed' }
+            Write-Host 'WSL1 bridge smoke passed using an imported official Ubuntu rootfs and the local release artifact.'
+          } finally {
+            if ($imported) { & wsl.exe --unregister $distro; if ($LASTEXITCODE -ne 0) { Write-Warning 'WSL1 fixture cleanup failed' } }
+            Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          }
+
   brew-test:
     name: Homebrew ${{ matrix.asset }}
     needs:
@@ -311,6 +571,9 @@ jobs:
       - release-check
       - build
       - brew-test
+      - windows-build
+      - winget-validation
+      - windows-wsl1-smoke
     runs-on: ubuntu-24.04
     env:
       RELEASE_VERSION: ${{ needs.release-check.outputs.version }}
@@ -318,7 +581,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: yashik-*.tar.gz
+          pattern: yashik-*
           path: dist
           merge-multiple: true
       - name: Build checksums and production formula
@@ -329,6 +592,19 @@ jobs:
           import hashlib
           from pathlib import Path
 
+          names = sorted(
+              ["install.sh"]
+              + [path.name for path in Path("dist").glob("yashik-*.tar.gz")]
+              + [path.name for path in Path("dist").glob("yashik-*.zip")]
+          )
+          for name in names:
+              digest = hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest()
+              print(f"{digest}  {name}")
+          PY
+          python3 - <<'PY' > "$RUNNER_TEMP/SHA256SUMS-unix"
+          import hashlib
+          from pathlib import Path
+
           names = sorted(["install.sh", *[path.name for path in Path("dist").glob("yashik-*.tar.gz")]])
           for name in names:
               digest = hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest()
@@ -336,8 +612,12 @@ jobs:
           PY
           python3 scripts/generate-homebrew.py \
             --version "$RELEASE_VERSION" \
-            --checksums dist/SHA256SUMS \
+            --checksums "$RUNNER_TEMP/SHA256SUMS-unix" \
             --output dist/yashik.rb
+          python3 scripts/generate-winget.py \
+            --version "$RELEASE_VERSION" \
+            --checksums dist/SHA256SUMS \
+            --output-dir "dist/manifests/a/AlexGladkov/Yashik/$RELEASE_VERSION"
           python3 - <<'PY'
           import re
           from pathlib import Path
@@ -355,6 +635,8 @@ jobs:
               "yashik-linux-aarch64.tar.gz",
               "yashik-macos-x86_64.tar.gz",
               "yashik-macos-aarch64.tar.gz",
+              "yashik-windows-x86_64.zip",
+              "yashik-windows-aarch64.zip",
           }
           seen = {}
           for line in checksums:
@@ -366,10 +648,14 @@ jobs:
                   raise SystemExit(f"duplicate checksum entry: {name}")
               seen[name] = digest
           if set(seen) != expected:
-              raise SystemExit("SHA256SUMS must contain exactly the four release archives and install.sh")
+              raise SystemExit("SHA256SUMS must contain exactly the six release archives and install.sh")
           for name in sorted(expected - {"install.sh"}):
               if not (Path("dist") / name).is_file():
                   raise SystemExit(f"missing release archive: {name}")
+              import hashlib
+              actual = hashlib.sha256((Path("dist") / name).read_bytes()).hexdigest()
+              if actual != seen[name]:
+                  raise SystemExit(f"SHA256SUMS has the wrong digest for {name}")
           for line in Path("dist/yashik.rb").read_text(encoding="utf-8").splitlines():
               if "releases/download/" in line and f"/v{cargo}/" not in line:
                   raise SystemExit("Homebrew formula URL is not pinned to the Cargo release tag")
@@ -382,12 +668,20 @@ jobs:
           retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
+          name: yashik-winget-manifests
+          path: dist/manifests/a/AlexGladkov/Yashik/${{ env.RELEASE_VERSION }}
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
           name: yashik-release-assets
           path: |
             dist/yashik-linux-x86_64.tar.gz
             dist/yashik-linux-aarch64.tar.gz
             dist/yashik-macos-x86_64.tar.gz
             dist/yashik-macos-aarch64.tar.gz
+            dist/yashik-windows-x86_64.zip
+            dist/yashik-windows-aarch64.zip
             dist/SHA256SUMS
             dist/install.sh
           if-no-files-found: error
@@ -423,6 +717,8 @@ jobs:
               dist/yashik-linux-aarch64.tar.gz \
               dist/yashik-macos-x86_64.tar.gz \
               dist/yashik-macos-aarch64.tar.gz \
+              dist/yashik-windows-x86_64.zip \
+              dist/yashik-windows-aarch64.zip \
               dist/SHA256SUMS dist/install.sh --clobber
           else
             gh release create "$RELEASE_TAG" \
@@ -430,6 +726,8 @@ jobs:
               dist/yashik-linux-aarch64.tar.gz \
               dist/yashik-macos-x86_64.tar.gz \
               dist/yashik-macos-aarch64.tar.gz \
+              dist/yashik-windows-x86_64.zip \
+              dist/yashik-windows-aarch64.zip \
               dist/SHA256SUMS dist/install.sh \
               --draft --verify-tag --title "$RELEASE_TAG" \
               --notes "Draft release for Yashik $RELEASE_TAG."

@@ -60,13 +60,15 @@ def validate_base_url(value: str) -> str:
 
 
 def render(version: str, checksums: dict[str, str], base_url: str) -> str:
+    formula_version = "" if base_url == f"{PRODUCTION_BASE}/v{version}" else f'  version "{version}"\n'
+
     def asset_url(key: str) -> str:
         return f"{base_url}/{ASSETS[key]}"
 
     return f'''class Yashik < Formula
   desc "Install and reconcile personal AI client environments"
   homepage "https://github.com/AlexGladkov/Yashik"
-  version "{version}"
+{formula_version.rstrip()}
   license "MIT"
 
   on_macos do
