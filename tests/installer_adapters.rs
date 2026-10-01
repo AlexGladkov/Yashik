@@ -453,7 +453,7 @@ fn portable_codex_rules_preserve_external_markdown_and_remove_only_the_owned_blo
 
     fs::write(
         &target,
-        format!("{}\n# Added outside the managed block\n", written),
+        format!("{written}\n# Added outside the managed block\n"),
     )
     .unwrap();
     assert_eq!(
