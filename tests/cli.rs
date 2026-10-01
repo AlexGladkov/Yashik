@@ -1,16 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct TestDir(PathBuf);
 
 impl TestDir {
     fn new() -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock before Unix epoch")
-            .as_nanos();
+        let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("yashik-cli-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&path).expect("create test directory");
         Self(fs::canonicalize(path).expect("canonicalize test directory"))
