@@ -1,0 +1,76 @@
+# Illustrative proposal only; replace every example value before use.
+# This file is not accepted by a released Yashik CLI yet.
+version: 1 # YAML schema version
+
+harnesses:
+  codex:
+    version: "0.50.0" # illustrative CLI pin; use a version supported by its recipe
+  claude:
+    agents:
+      portable-reviewer:
+        # Fully replaces the portable common agent for Claude Code.
+        format: native
+        source:
+          type: git
+          url: https://example.invalid/team/agent-kit.git
+        from: native/claude/portable-reviewer.md
+  opencode: {}
+  pi:
+    agents:
+      portable-reviewer:
+        enabled: false # avoid requesting a subagent capability Pi has not confirmed
+  omp:
+    rules:
+      terminal-notes:
+        format: native
+        source:
+          type: local
+          path: ./resources
+        from: native/omp/terminal-notes.md
+
+# Root resources apply to every listed and enabled harness.
+mcp:
+  knowledge-search:
+    source:
+      type: git
+      url: https://example.invalid/team/knowledge-search.git
+      ref: "1111111111111111111111111111111111111111" # illustrative commit pin
+    install:
+      requires: [node]
+      steps:
+        - [npm, ci]
+        - [npm, run, build]
+    transport: stdio
+    run:
+      command: node
+      args: ["${source}/dist/server.js"]
+      env:
+        SEARCH_API_TOKEN: "${env:SEARCH_API_TOKEN}"
+
+skills:
+  release-check:
+    source:
+      type: local
+      path: ./resources # relative to this YAML file; may also be an absolute path
+    from: skills/release-check # directory containing SKILL.md
+
+agents:
+  portable-reviewer:
+    format: portable
+    description: "Review a change for correctness and missing cases."
+    source:
+      type: git
+      url: https://example.invalid/team/agent-kit.git
+      # No ref: resolve the current default branch again on each init.
+    from: agents/portable-reviewer.md
+
+rules:
+  writing-style:
+    format: portable
+    source:
+      type: local
+      path: ./resources
+    from: rules/writing-style.md
+
+# Local blocks add a resource, replace an identically named common resource,
+# or disable that common resource for this harness. A replacement is complete.
