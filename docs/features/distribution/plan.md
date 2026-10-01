@@ -86,8 +86,8 @@ Tag-triggered workflow создаёт **draft** GitHub Release после про
   в точный tag и Cargo version; pre-release, shell characters, неизвестные
   аргументы и относительные пути отклоняются. По умолчанию — `$HOME/.local/bin`.
 - `uname` выбирает только Linux/Darwin и x86_64/amd64/aarch64/arm64. Остальные
-  сочетания завершаются с ошибкой до записи destination. Используется `curl`,
-  либо HTTPS-download через `wget`; отсутствие downloader, SHA-256 tool или
+  сочетания завершаются с ошибкой до записи destination. Используется только
+  `curl` с HTTPS-only transfer и redirects; отсутствие downloader, SHA-256 tool или
   archive tool даёт понятную ошибку. Поддержать `sha256sum` и `shasum -a 256`.
 - Скачать закреплённый архив и `SHA256SUMS` в приватный temporary directory.
   Выбрать единственную строку с точным именем ожидаемого архива и валидным
@@ -98,8 +98,11 @@ Tag-triggered workflow создаёт **draft** GitHub Release после про
   Извлечь только этот member в приватный staging file внутри destination,
   установить `0755` и выполнить `--version`. Требуется точный ответ
   `yashik VERSION`; проба проходит до изменения установленного executable.
-- Byte-identical установленный файл успешно завершает повторный запуск без
-  изменения бинарника. Любой другой обычный файл сохраняется без `--force`;
+- Byte-identical executable успешно завершает повторный запуск без
+  изменения бинарника. Byte-identical файл без executable permissions
+  атомарно заменяется проверенным staging file с mode 0755 без `--force`;
+  другой payload не допускается в этой repair-ветке.
+  Любой другой обычный файл сохраняется без `--force`;
   `--force` разрешает заменить его только после всех проверок. Не запускать
   существующий неизвестный файл для определения его происхождения. Symlink,
   directory, device и другие non-regular targets не заменяются даже с force.
@@ -112,6 +115,13 @@ Tag-triggered workflow создаёт **draft** GitHub Release после про
 пример для скрипта с `SHA256SUMS`, Homebrew-команду, архитектуры, directory
 override и source fallback. Переменная `DEFAULT_VERSION` обновляется вместе с
 Cargo version при каждом следующем релизе.
+
+Review amendment (2026-10-01): root согласовал curl-only bootstrap после
+воспроизведённого HTTPS→HTTP redirect через GNU Wget `--https-only`.
+Пользователь не требовал Wget; небезопасный fallback удаляется. Также
+согласован atomic permission repair только byte-identical payload с 0644;
+корректный identical executable сохраняет inode/mtime. Это заменяет ранние
+варианты downloader/idempotence и не требует нового подтверждения.
 
 ## Workflow, формула и portability
 
@@ -250,7 +260,7 @@ GitHub API, после публикации обязательна повтор�
 | --- | --- |
 | D1 release | Tag/root Cargo/Windows crate/script — 0.2.1; успешны fmt, tests, Clippy; четыре native Unix build/test jobs; Linux binary статический; Darwin обе архитектуры запускались native. Windows x64 tests/build и ARM64 cross-build успешны. Draft/final содержит четыре tar.gz, два ZIP, SHA256SUMS и install.sh. |
 | D2 archive | Каждый архив имеет только regular root executable yashik. Hash matches manifest; извлечённый файл отвечает `yashik 0.2.1`, проходит `--help` и `check`. |
-| D3 sh success | POSIX sh с curl и wget fallback устанавливает в default/custom absolute bin dir. Повторный запуск сохраняет бинарник. PATH hint корректен, sudo/profile edits отсутствуют. Native CI проверяет Linux x64/arm64 и macOS Intel/arm64. |
+| D3 sh success | POSIX sh с curl и HTTPS-only redirects устанавливает в default/custom absolute bin dir; без curl завершается с понятной ошибкой. Повторный запуск сохраняет executable binary/inode/mtime; identical 0644 file атомарно чинится до 0755 без force. PATH hint корректен, sudo/profile edits отсутствуют. Native CI проверяет Linux x64/arm64 и macOS Intel/arm64. |
 | D4 preservation | Foreign regular file отказан без force и заменён с force после проверки. Unsupported OS/arch, malformed options/version, duplicate/missing/bad checksum, invalid/link/traversal archive и wrong binary version сохраняют прежний binary и outside sentinel. Symlink/non-regular destination отказан. |
 | D5 brew | Generated production formula имеет четыре tag-pinned URL и точные hashes окончательных assets. На каждом native CI platform local-tap install/test/probes используют тот же release archive. После публикации публичный `brew install AlexGladkov/tap/yashik` проходит как минимум на доступной реальной Linux машине; audit/test results и остальные публичные platform limits записаны отдельно. |
 | D6 Ubuntu | Root проверяет чистого non-root пользователя на разрешённом Ubuntu host `<authorized Ubuntu host>`: публичный installer скачивает v0.2.1, --version/--help, повторный install, foreign/force и corrupted fixture сохраняют ожидаемые файлы. С release binary повторить examples/codex-voltagent.yaml: check, init, codex --version, doctor, повторный init. |

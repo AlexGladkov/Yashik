@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import pathlib
 import shutil
@@ -25,6 +26,7 @@ class InstallerScriptTests(unittest.TestCase):
         self.home = self.temp_root / "home with spaces"
         self.home.mkdir()
         self.download_log = self.temp_root / "download urls.txt"
+        self.curl_args_log = self.temp_root / "curl args.txt"
         self._write_mock_tools()
         self.env = os.environ.copy()
         self.env.update(
@@ -32,6 +34,7 @@ class InstallerScriptTests(unittest.TestCase):
                 "HOME": str(self.home),
                 "YASHIK_FIXTURE_DIR": str(self.fixture_dir),
                 "YASHIK_DOWNLOAD_LOG": str(self.download_log),
+                "YASHIK_CURL_ARGS_LOG": str(self.curl_args_log),
                 "YASHIK_TEST_OS": "Linux",
                 "YASHIK_TEST_ARCH": "x86_64",
                 "PATH": str(self.fake_bin) + os.pathsep + os.environ.get("PATH", ""),
@@ -60,7 +63,7 @@ class InstallerScriptTests(unittest.TestCase):
         curl = self.fake_bin / "curl"
         curl.write_text(
             "#!/usr/bin/env python3\n"
-            "import os, pathlib, shutil, sys\n"
+            "import json, os, pathlib, shutil, sys\n"
             "args = sys.argv[1:]\n"
             "try:\n"
             "    output = pathlib.Path(args[args.index('--output') + 1])\n"
@@ -69,6 +72,8 @@ class InstallerScriptTests(unittest.TestCase):
             "    sys.exit(2)\n"
             "with open(os.environ['YASHIK_DOWNLOAD_LOG'], 'a', encoding='utf-8') as log:\n"
             "    log.write(url + '\\n')\n"
+            "with open(os.environ['YASHIK_CURL_ARGS_LOG'], 'a', encoding='utf-8') as log:\n"
+            "    log.write(json.dumps(args) + '\\n')\n"
             "source = pathlib.Path(os.environ['YASHIK_FIXTURE_DIR']) / url.rsplit('/', 1)[-1]\n"
             "if not source.is_file():\n"
             "    sys.exit(22)\n"
@@ -160,6 +165,36 @@ class InstallerScriptTests(unittest.TestCase):
             ],
         )
 
+    def test_curl_restricts_initial_requests_and_redirects_to_https(self):
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [
+            json.loads(line)
+            for line in self.curl_args_log.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(len(calls), 2)
+        for arguments in calls:
+            self.assertEqual(arguments[arguments.index("--proto") + 1], "=https")
+            self.assertEqual(arguments[arguments.index("--proto-redir") + 1], "=https")
+            self.assertIn("--tlsv1.2", arguments)
+
+    def test_missing_curl_fails_before_download_or_destination_creation(self):
+        no_curl = self.temp_root / "tools without curl"
+        no_curl.mkdir()
+        shutil.copyfile(self.fake_bin / "uname", no_curl / "uname")
+        (no_curl / "uname").chmod(0o755)
+        destination = self.temp_root / "must not exist"
+
+        result = self.run_installer(
+            "--bin-dir",
+            str(destination),
+            env={"PATH": str(no_curl)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("curl is required", result.stderr)
+        self.assertFalse(destination.exists())
+        self.assertFalse(self.download_log.exists())
+
     def test_version_prefix_and_alias_platform_asset_mapping(self):
         cases = [
             ("Linux", "amd64", "yashik-linux-x86_64.tar.gz"),
@@ -189,6 +224,19 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("already installed", second.stdout)
         self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+
+    def test_byte_identical_non_executable_file_is_repaired_without_force(self):
+        target = self.home / ".local" / "bin" / "yashik"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(self.binary_payload)
+        target.chmod(0o644)
+
+        result = self.run_installer()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Installed Yashik 0.2.1", result.stdout)
+        self.assertEqual(target.read_bytes(), self.binary_payload)
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
     def test_foreign_regular_file_requires_force_and_force_replaces_after_validation(self):
         target = self.home / ".local" / "bin" / "yashik"

@@ -454,7 +454,7 @@ pub fn open_or_create_regular(path: &Path, mode: u32) -> InstallResult<File> {
                 parent.as_raw_fd(),
                 name.as_ptr(),
                 libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-                mode as libc::mode_t,
+                mode as libc::c_uint,
             )
         };
         if fd < 0 {
@@ -765,7 +765,7 @@ fn atomic_write_inner(
                 parent.as_raw_fd(),
                 name.as_ptr(),
                 libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-                mode as libc::mode_t,
+                mode as libc::c_uint,
             )
         };
         if fd >= 0 {
@@ -1133,7 +1133,7 @@ fn create_regular_new_nofollow(path: &Path, mode: u32) -> InstallResult<File> {
             parent.as_raw_fd(),
             name.as_ptr(),
             libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            mode as libc::mode_t,
+            mode as libc::c_uint,
         )
     };
     if fd < 0 {
@@ -1206,7 +1206,7 @@ fn hash_open_file(file: &mut File) -> InstallResult<String> {
 #[cfg(unix)]
 fn metadata_dev(metadata: &fs::Metadata) -> libc::dev_t {
     use std::os::unix::fs::MetadataExt;
-    metadata.dev()
+    metadata.dev() as libc::dev_t
 }
 
 #[cfg(unix)]

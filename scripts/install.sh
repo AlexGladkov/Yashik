@@ -110,13 +110,7 @@ case "$system_name:$machine_name" in
         ;;
 esac
 
-if command -v curl >/dev/null 2>&1; then
-    downloader=curl
-elif command -v wget >/dev/null 2>&1; then
-    downloader=wget
-else
-    fail 'curl or wget is required to download the release'
-fi
+command -v curl >/dev/null 2>&1 || fail 'curl is required to download the release'
 
 if command -v sha256sum >/dev/null 2>&1; then
     checksum_tool=sha256sum
@@ -149,15 +143,10 @@ trap 'exit 1' HUP INT TERM
 download() {
     download_url=$1
     download_path=$2
-    if [ "$downloader" = curl ]; then
-        if ! curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-            "$download_url" --output "$download_path"; then
-            fail "download failed: $download_url"
-        fi
-    else
-        if ! wget --https-only --quiet --output-document "$download_path" "$download_url"; then
-            fail "download failed: $download_url"
-        fi
+    if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+        --fail --silent --show-error --location \
+        "$download_url" --output "$download_path"; then
+        fail "download failed: $download_url"
     fi
 }
 
@@ -261,9 +250,13 @@ if [ -L "$target_path" ]; then
 elif [ -e "$target_path" ]; then
     [ -f "$target_path" ] || fail "refusing to replace non-regular target: $target_path"
     if cmp -s "$target_path" "$stage_file"; then
-        rm -f "$stage_file"
-        stage_file=
-        install_status=already
+        if [ -x "$target_path" ]; then
+            rm -f "$stage_file"
+            stage_file=
+            install_status=already
+        else
+            install_status=installed
+        fi
     else
         [ "$force" = yes ] || fail "existing file differs; pass --force to replace: $target_path"
         install_status=installed
