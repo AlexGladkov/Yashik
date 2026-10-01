@@ -1877,6 +1877,7 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("yashik-rules-engine-{nonce}"));
         fs::create_dir_all(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
         let source_root = root.join("rules-source");
         fs::create_dir_all(&source_root).unwrap();
         fs::write(source_root.join("portable.md"), "new rule text\n").unwrap();
@@ -1973,6 +1974,7 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("yashik-artifact-gc-{nonce}"));
         fs::create_dir_all(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
         let paths = Paths {
             home: root.join("home"),
             data: root.join("data/yashik"),
