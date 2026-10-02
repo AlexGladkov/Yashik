@@ -7,6 +7,52 @@
 изменения машины, `doctor` проверяет записанное окружение без переустановки.
 Пользователь самостоятельно входит в Codex, Claude и другие сервисы.
 
+## Подготовьте свой сетап
+
+Сохраните следующий конфиг в файл `yashik.yaml`. Это готовый пример: Ящик
+установит Codex CLI версии `0.159.3` и два субагента из репозитория VoltAgent.
+Для скачивания Git-источника нужен `git` в PATH.
+
+```yaml
+version: 1
+harnesses:
+  codex:
+    version: "0.159.3"
+    agents:
+      backend-developer:
+        format: native
+        source:
+          type: git
+          url: https://github.com/VoltAgent/awesome-codex-subagents.git
+          ref: 7add6913c53ccbbc250c481815c9c6afb02709c6
+        from: categories/01-core-development/backend-developer.toml
+      reviewer:
+        format: native
+        source:
+          type: git
+          url: https://github.com/VoltAgent/awesome-codex-subagents.git
+          ref: 7add6913c53ccbbc250c481815c9c6afb02709c6
+        from: categories/04-quality-security/reviewer.toml
+```
+
+`harnesses` задаёт coding-клиенты, а `agents` внутри `codex` — субагентов
+именно для Codex. `source.url` указывает репозиторий, `source.ref` закрепляет
+его ревизию, `from` выбирает файл внутри репозитория. `format: native`
+сохраняет агент в родном TOML-формате Codex в `~/.codex/agents/`.
+
+После установки Ящика выполните из папки с этим файлом:
+
+```sh
+yashik check ./yashik.yaml
+yashik init ./yashik.yaml
+yashik doctor
+```
+
+`check` проверяет конфиг, `init` скачивает и устанавливает описанный сетап,
+`doctor` проверяет результат. Вход в Codex выполняется самостоятельно.
+Чтобы добавить другие клиенты, MCP, skills или rules, расширьте конфиг
+по описанию в разделе [YAML](#yaml).
+
 ## Установка
 
 Linux и macOS, x86_64 и ARM64:
