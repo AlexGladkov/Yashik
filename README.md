@@ -55,24 +55,64 @@ yashik doctor
 
 ## Установка
 
-Linux и macOS, x86_64 и ARM64:
+Выберите свою систему:
+
+- **[macOS](#macos)** → есть Homebrew: одна команда; нет Homebrew: скрипт.
+- **[Linux](#linux)** → скрипт в терминале.
+- **[Windows](#windows)** → установка внутри WSL.
+
+### macOS
+
+**Есть Homebrew?** Выполните в Терминале:
+
+```sh
+brew install AlexGladkov/tap/yashik
+```
+
+**Нет Homebrew?** Используйте [скрипт ниже](#linux) — он подходит и для macOS.
+
+### Linux
+
+Выполните в терминале (также подходит для macOS без Homebrew):
 
 ```sh
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
   https://github.com/AlexGladkov/Yashik/releases/latest/download/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+yashik --version
 ```
 
-Скрипт устанавливает только Ящик в `~/.local/bin`, проверяет SHA-256 архива и
-не изменяет shell-профиль. Нужны `curl`, `tar` и `sha256sum` либо `shasum`; Rust не нужен. Для другой папки используйте
-`sh -s -- --bin-dir /absolute/path`. Повторная установка идентичного бинарника
-не меняет его; для замены другой версии нужен `--force`.
+Поддерживаются x86_64 и ARM64. Нужны `curl`, `tar` и `sha256sum` либо `shasum`;
+Rust не нужен. Скрипт устанавливает Ящик в `~/.local/bin`.
+Команда `export` действует в текущем терминале. Для новых терминалов добавьте
+`export PATH="$HOME/.local/bin:$PATH"` в `~/.bashrc` (Bash) или `~/.zshrc` (Zsh).
 
-Homebrew:
+### Windows
 
-```sh
-brew install AlexGladkov/tap/yashik
-```
+Для работы Ящика нужен **WSL с настроенным Linux-дистрибутивом**.
+
+1. Если WSL ещё нет, выполните в PowerShell от имени администратора:
+
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+
+   Перезагрузите компьютер, если Windows попросит, затем откройте Ubuntu
+   и завершите первоначальную настройку пользователя.
+
+2. В терминале Ubuntu выполните команды из раздела [Linux](#linux).
+3. Запускайте `yashik` и команды вашего сетапа в этом же терминале Ubuntu.
+   Все инструменты и настройки будут установлены внутри WSL.
+
+<details>
+<summary>Дополнительные варианты: версия, проверка скрипта и запуск из PowerShell</summary>
+
+### Параметры скрипта
+
+Скрипт проверяет SHA-256 архива и не изменяет shell-профиль.
+Для другой папки используйте `sh -s -- --bin-dir /absolute/path`.
+Повторная установка идентичного бинарника не меняет его;
+для замены другой версии добавьте `--force` к аргументам скрипта.
 
 Закреплённая версия:
 
@@ -100,7 +140,7 @@ sha256sum -c install.sha256 && sh install.sh
 Результаты реальных проверок платформ описаны в
 [distribution validation](docs/features/distribution/validation.md).
 
-## Windows: WinGet и WSL
+### Windows: запуск из PowerShell
 
 Windows-пакет содержит `yashik.exe`, который запускает Linux-версию в WSL.
 Нужен уже установленный и инициализированный WSL-дистрибутив с `curl`,
@@ -132,6 +172,26 @@ Linux Ящик из закреплённого релиза; для замены
 `yashik.exe` в отдельную папку и добавьте её в пользовательский PATH.
 Статус проверки WinGet и WSL указан в
 [distribution validation](docs/features/distribution/validation.md).
+
+</details>
+
+### Удаление
+
+Если установили через Homebrew:
+
+```sh
+brew uninstall yashik
+```
+
+Если установили скриптом (на Windows — в терминале WSL):
+
+```sh
+rm -f "$HOME/.local/bin/yashik"
+```
+
+Если задавали `--bin-dir`, удалите файл `yashik` из выбранной папки.
+Эти команды удаляют сам Ящик; инструменты и настройки, созданные через
+`yashik init`, остаются.
 
 ## Сборка из исходников
 
