@@ -1,6 +1,6 @@
 # Validation: Herdr tools and Yashik 0.3.0
 
-Status: final reviewed fallback revision passes 94 Rust tests, formatting and strict Clippy. Live Linux x86_64 first/repeat installation and read-only doctor checks passed. Actual primary and official-mirror requests were observed on the live server. CI release artifacts and publication are still pending; v0.3.0 is not yet published.
+Status: final reviewed fallback revision passes 94 Rust tests, formatting and strict Clippy. Live Linux x86_64 first/repeat installation and read-only doctor checks passed. Actual primary and official-mirror requests were observed on the live server. Final cross-platform CI passed and v0.3.0 is published. Public installer acceptance on the real Linux server passed; the owned Homebrew tap is updated.
 
 ## Release integration checks
 
@@ -140,3 +140,20 @@ their owners; Windows and Python checks were unchanged and were not repeated.
 ## Cross-target fixture correction and new CI attempt
 
 Run https://github.com/AlexGladkov/Yashik/actions/runs/37447470384 passed the root release gate, Linux x86_64 build, both Windows builds, and WinGet portable validation. Linux ARM and both macOS test jobs exposed a doctor fixture hardcoded to a Linux x86_64 asset URL; production validation correctly rejected it. The test now derives its OS/architecture like production. Separate repeated local runs captured ETXTBSY on tmpfs test roots, documented above; test roots now use the Cargo output filesystem. Both corrections are test-only and have independent review and final 94-test validation. No release was created or published by the failed run; its unpublished tag will be updated with an expected-old-tag lease.
+
+## CI-produced Linux package acceptance
+
+Downloaded the Linux x86_64 build artifact from run https://github.com/AlexGladkov/Yashik/actions/runs/37448910579 (tag source a52714ba225d18dc28cafd117c327d969d6e2263). Archive SHA256 is 75ce1f60f524ddf4c6a5a6d7b002359389f6595e710aab19441149c116a38722. Transferred it to the real server and checked that same SHA256 remotely before extracting. Packaged `--version` reported yashik 0.3.0; actual YAML `check`, `init` (Unchanged), `doctor` (verified) and `herdr --version` (0.9.3) all passed. Active Herdr inode/mtime/size still matched the first successful install. This completes the pre-publication CI-artifact server confirmation; final assembled release checksums and public installer are still pending.
+
+
+## Published release and public installer acceptance
+
+Final CI run https://github.com/AlexGladkov/Yashik/actions/runs/37448910579 succeeded, including Linux x86_64/ARM64 and macOS Intel/ARM64 builds and tests, Windows x86_64/ARM64 builds, portable-package validation, and all four Homebrew formula checks. An isolated WSL1 smoke attempt job succeeded; this record does not independently establish every Windows/WSL runtime.
+
+All eight assembled files were verified: seven checksum entries, six archive layouts, and the install script default. Draft assets matched the verified CI assembly byte for byte. Release https://github.com/AlexGladkov/Yashik/releases/tag/v0.3.0 is public and marked latest, with source a52714ba225d18dc28cafd117c327d969d6e2263. Both the pinned and latest public install scripts have SHA256 0e321d204c63d465111d0d39930d3e41af130f0d48ddb0e8287250d85754c41e.
+
+On test-server-root, the public installer initially protected the existing Yashik 0.2.0 binary. After confirming its version, the authorized release update used --force and installed 0.3.0 at /root/.local/bin/yashik. Publicly installed --version, manifest check, bare init, doctor, and Herdr --version all passed. Repeat init reported Unchanged; Herdr remained 0.9.3 and preserved the original inode/mtime/size. The shell PATH was not edited.
+
+The generated Homebrew formula matched the CI-tested production formula exactly and was pushed to AlexGladkov/homebrew-tap in commit 52ec48a. This does not claim publication of a new community WinGet manifest.
+
+The live manifest remains the pinned Herdr-only acceptance configuration in /root/opt/yashik-setup/yashik-compose.yaml. The requested four harnesses, full agent collection, and MCP services still require configuration and acceptance. Authenticated model/MCP calls and interactive Herdr sessions were not exercised.
