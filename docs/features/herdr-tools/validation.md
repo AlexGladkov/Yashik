@@ -102,3 +102,7 @@ This is a real Linux server installation, not a mocked fixture. It does not esta
 
 
 A third real pinned init was observed through /proc without altering curl or the network. Both the primary metadata URL and fixed official GitHub mirror were actually requested; the run reported Unchanged and preserved the active binary inode/mtime/size again. Observed endpoint labels were recorded remotely in .validation/metadata-observed.txt. This confirms the real fallback branch, not only fixture coverage.
+
+## First tag CI and pinned-toolchain test fix
+
+First tag run https://github.com/AlexGladkov/Yashik/actions/runs/37447212569 passed root Rust checks and Windows tests, but Rust 1.88 Clippy rejected one version assertion's uninlined format argument at tools/windows-launcher/src/lib.rs:752. Changed that test-only format to the exact recommended `{VERSION}` capture; independent re-review found unchanged semantics. Local Windows 14 tests, fmt and strict Clippy passed again. No release was created or published by the failed workflow; the unpublished tag will be updated with an expected-old-tag lease, retaining the prior source commit.

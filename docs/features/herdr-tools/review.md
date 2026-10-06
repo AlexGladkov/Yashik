@@ -96,3 +96,12 @@ classification. Independent rerun: `cargo test --locked install::tools::tests`
 passed (14 tests). No code-review finding remains for the amended H3 behavior.
 The timeout termination path was inspected; there is still no dedicated
 stalled-child timeout test.
+
+## Release integration re-review
+
+The pinned Rust 1.88 Clippy failure was a test-only `format!` interpolation
+style issue in the Windows launcher. The one-line change now uses
+`format!("releases/download/v{VERSION}'")`, preserving the assertion while
+satisfying `uninlined_format_args`. No product behavior changed. Execute
+reports Windows launcher tests (14), formatting, and strict Clippy passing
+locally; the release integration finding is closed.

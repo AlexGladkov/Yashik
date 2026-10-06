@@ -749,7 +749,7 @@ mod tests {
         );
         let forwarded = strings(&wsl.forward_args[0]);
         assert_eq!(forwarded.last().map(String::as_str), Some("--force"));
-        assert!(forwarded[5].contains(&format!("releases/download/v{}'", VERSION)));
+        assert!(forwarded[5].contains(&format!("releases/download/v{VERSION}'")));
         assert!(forwarded[5].contains("download \"$base/install.sh\""));
         assert!(forwarded[5].contains("SHA256SUMS"));
         assert_eq!(forwarded[7], "--force");
