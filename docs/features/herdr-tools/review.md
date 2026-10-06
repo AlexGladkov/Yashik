@@ -64,9 +64,13 @@ P2 finding remains in the reviewed Herdr code. The caller reports download
 failure and does not proceed to activation when the bounded reader rejects an
 oversized, failed, or timed-out transfer.
 
-The reported transient fixture spawn failure was not reproduced by this
-review. It occurs at the bounded `--version` child spawn and is reported as an
-installation error; the parent reports that the final 88-test suite passed.
+The earlier transient fixture spawn failure was reproduced by Execute as
+Linux `ETXTBSY` (errno 26) when tests staged executables under the default
+tmpfs-backed `TMPDIR` (6 failures in 30 runs); the same runs were clean when
+staging on the repository filesystem. `TempTree` now creates unique temporary
+roots beside the current test executable, keeping `TMPDIR` unchanged and
+avoiding the tmpfs execution race. The current focused Herdr suite passed all
+14 tests; Execute reports the full 94-test suite passed.
 
 ## Re-review: metadata transport fallback
 
@@ -105,3 +109,23 @@ style issue in the Windows launcher. The one-line change now uses
 satisfying `uninlined_format_args`. No product behavior changed. Execute
 reports Windows launcher tests (14), formatting, and strict Clippy passing
 locally; the release integration finding is closed.
+
+## Platform fixture re-review
+
+The doctor tampering fixture now builds its recorded release asset URL from
+`platform_key(std::env::consts::OS, std::env::consts::ARCH)`, matching the
+platform-specific ownership validation in `verify_record`. This removes its
+previous Linux x86_64 hardcode and addresses the Linux ARM64/macOS fixture
+failures from CI run 37447470384. The focused doctor test passed locally on
+Linux x86_64. Cross-target CI reruns remain validation evidence for the
+respective runners.
+
+### P1 — Strict Clippy gate briefly failed on staged-probe diagnostics — resolved
+
+An intermediate staged-probe diagnostic edit bound an error used only inside
+`#[cfg(test)]`, causing an `unused variable` failure in the normal library
+build. The final tree removes that temporary diagnostic and restores the
+ordinary error mapping. Independent rerun:
+`cargo clippy --locked --all-targets -- -D warnings` passed, closing this H6
+gate finding. The final `TempTree` change is test-only; the current focused
+Herdr suite also passed all 14 tests.

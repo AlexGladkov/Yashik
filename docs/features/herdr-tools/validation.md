@@ -106,3 +106,37 @@ A third real pinned init was observed through /proc without altering curl or the
 ## First tag CI and pinned-toolchain test fix
 
 First tag run https://github.com/AlexGladkov/Yashik/actions/runs/37447212569 passed root Rust checks and Windows tests, but Rust 1.88 Clippy rejected one version assertion's uninlined format argument at tools/windows-launcher/src/lib.rs:752. Changed that test-only format to the exact recommended `{VERSION}` capture; independent re-review found unchanged semantics. Local Windows 14 tests, fmt and strict Clippy passed again. No release was created or published by the failed workflow; the unpublished tag will be updated with an expected-old-tag lease, retaining the prior source commit.
+
+## Local staged-probe fixture filesystem follow-up
+
+Repeated Linux runs exposed errno 26 (`ETXTBSY`, “Text file busy”) while the
+fixture launched its newly staged shell executable from the default `/tmp`.
+The test-only `/proc` descriptor scan found no open write handle for that
+inode. `atomic_write_inner` writes with `O_CLOEXEC`, closes the temporary file
+before renaming it into place, and returns before the probe starts. The local
+host mounts `/tmp` as `tmpfs` and the repository on `ext4`: 30 repeated focused
+tools-suite runs using default `/tmp` hit the error on run 6, while 30 runs
+with `TMPDIR` set to the repository filesystem passed. `TempTree` now creates
+its unique fixture root beside the current test executable in the Cargo target
+directory. After that change, 30 focused-suite runs passed with the default
+`TMPDIR` still pointing at tmpfs (the isolated probe home remains there). The
+production install and probe code are unchanged, and no retry was added.
+
+## Final validation after fixture filesystem change (2026-10-06)
+
+On the final test-only fixture revision, I ran:
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo test --locked` — passed, 94 tests: 35 library unit, 1 binary unit,
+  58 integration; no failures. Doc tests had no cases.
+
+The root crate test suite includes the Herdr metadata transport fallback,
+ownership-on-failure/retry, checksum and version validation, idempotent repeat,
+collision, removal, and doctor fixtures. The 30 repeated focused-suite runs
+with fixture roots beside the test executable are recorded above. Clippy and
+the independent 14-test Herdr review passed on this revision according to
+their owners; Windows and Python checks were unchanged and were not repeated.
+
+## Cross-target fixture correction and new CI attempt
+
+Run https://github.com/AlexGladkov/Yashik/actions/runs/37447470384 passed the root release gate, Linux x86_64 build, both Windows builds, and WinGet portable validation. Linux ARM and both macOS test jobs exposed a doctor fixture hardcoded to a Linux x86_64 asset URL; production validation correctly rejected it. The test now derives its OS/architecture like production. Separate repeated local runs captured ETXTBSY on tmpfs test roots, documented above; test roots now use the Cargo output filesystem. Both corrections are test-only and have independent review and final 94-test validation. No release was created or published by the failed run; its unpublished tag will be updated with an expected-old-tag lease.

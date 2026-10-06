@@ -995,12 +995,22 @@ mod tests {
 
     impl TempTree {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "yashik-herdr-tools-{}-{}",
+            let test_output_dir = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = test_output_dir.join(format!(
+                "yashik-herdr-tools-{}-{nonce}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::create_dir_all(path.join("home")).unwrap();
+            fs::create_dir(&path).unwrap();
+            fs::create_dir(path.join("home")).unwrap();
             let path = fs::canonicalize(path).unwrap();
             Self(path)
         }
@@ -1480,7 +1490,8 @@ mod tests {
         util::private_dir(&paths.data).unwrap();
         util::private_dir(&paths.bin).unwrap();
         let version = "1.2.3";
-        let asset_url = expected_asset_url(version, "linux-x86_64");
+        let key = platform_key(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        let asset_url = expected_asset_url(version, key);
         let bytes = b"#!/bin/sh\nprintf 'herdr 1.2.3\\n'\n";
         let hash = util::sha256_bytes(bytes);
         let target = versioned_binary(&paths, version);
