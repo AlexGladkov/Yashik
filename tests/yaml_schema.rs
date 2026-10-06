@@ -119,3 +119,75 @@ fn herdr_schema_rejects_unknown_fields_duplicates_null_and_missing_harnesses() {
         );
     }
 }
+
+#[test]
+fn orca_is_a_closed_root_tool_with_defaults_and_semver_validation() {
+    let manifest: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  orca: {}\n").unwrap();
+    assert!(validate_manifest(&manifest).is_ok());
+    let effective = build_effective(&manifest, Path::new("/tmp/config")).unwrap();
+    assert_eq!(effective.orca.unwrap().version, "latest");
+
+    let pinned: Manifest = serde_yaml::from_str(
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: true\n    version: '1.4.221'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        build_effective(&pinned, Path::new("/tmp/config"))
+            .unwrap()
+            .orca
+            .unwrap()
+            .version,
+        "1.4.221"
+    );
+
+    let disabled: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: false\n")
+            .unwrap();
+    assert!(build_effective(&disabled, Path::new("/tmp/config"))
+        .unwrap()
+        .orca
+        .is_none());
+
+    let invalid: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  orca:\n    version: v1.4.221\n")
+            .unwrap();
+    let issues = validate_manifest(&invalid).unwrap_err();
+    assert!(issues
+        .iter()
+        .any(|issue| issue.path == "tools.orca.version"));
+}
+
+#[test]
+fn orca_schema_rejects_unknown_fields_duplicates_null_and_missing_harnesses() {
+    for input in [
+        "version: 1\nharnesses: {}\ntools: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  extra: {}\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: 'true'\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    version: []\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    version: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    version: latest\n    version: 1.2.3\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: true\n    enabled: false\n",
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    unknown: true\n",
+        "version: 1\ntools:\n  orca: {}\n",
+    ] {
+        assert!(
+            serde_yaml::from_str::<Manifest>(input).is_err(),
+            "Orca schema unexpectedly accepted: {input}"
+        );
+    }
+}
+
+#[test]
+fn herdr_and_orca_coexist_as_independent_tools() {
+    let manifest: Manifest = serde_yaml::from_str(
+        "version: 1\nharnesses: {}\ntools:\n  herdr: {}\n  orca:\n    version: '1.4.221'\n",
+    )
+    .unwrap();
+
+    let effective = build_effective(&manifest, Path::new("/tmp/config")).unwrap();
+    assert_eq!(effective.herdr.unwrap().version, "latest");
+    assert_eq!(effective.orca.unwrap().version, "1.4.221");
+}

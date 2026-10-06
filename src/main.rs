@@ -221,6 +221,9 @@ fn sanitize_issue_path(path: &str) -> String {
                     | "opencode"
                     | "pi"
                     | "omp"
+                    | "tools"
+                    | "herdr"
+                    | "orca"
                     | "mcp"
                     | "skills"
                     | "agents"
@@ -274,6 +277,9 @@ fn report_effective(effective: &EffectiveManifest) {
     }
     if let Some(herdr) = &effective.herdr {
         println!("\nHerdr (version: {})", herdr.version);
+    }
+    if let Some(orca) = &effective.orca {
+        println!("\nOrca (version: {})", orca.version);
     }
 }
 

@@ -351,6 +351,7 @@ fn install_verified_bytes(
         executable: active.clone(),
         fingerprint: release.sha256.clone(),
         previous_versions,
+        orca: None,
     };
     Ok(InstallAttempt::Installed {
         record: Box::new(record),
@@ -1509,6 +1510,7 @@ mod tests {
             executable: active.clone(),
             fingerprint: hash,
             previous_versions: Vec::new(),
+            orca: None,
         };
         doctor(&paths, &record).unwrap();
         fs::write(&active, b"tampered").unwrap();

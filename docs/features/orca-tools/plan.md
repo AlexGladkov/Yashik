@@ -1,0 +1,60 @@
+# Plan: управляемая установка Orca
+
+## Поведение и границы
+
+Манифест v1 принимает Orca в том же закрытом разделе, что и Herdr:
+
+```yaml
+version: 1
+harnesses: {}
+tools:
+  herdr:
+    version: 0.9.3
+  orca:
+    enabled: true
+    version: latest
+```
+
+`tools.orca` не зависит от harness и Herdr. Пустая карта означает `enabled: true`, `version: latest`; точная версия записывается строгим SemVer без `v`. `enabled: false` и отсутствие записи исключают Orca из желаемого состояния. `harnesses` по-прежнему обязателен, даже когда он пуст. Неизвестные tools/поля, дубликаты, `null`, неверные типы и версии отвергаются. `check` выводит Orca отдельно, не обращается к сети и не создаёт state.
+
+Объём этой фичи — **только установка CLI**. `init` не запускает `serve`, не создаёт listener, systemd unit, пользователя сервиса, Xvfb, firewall rule или интеграции с harness; не меняет системные пакеты. Профили, pairing, сессии и рабочие данные Orca остаются пользовательскими. Возможное постоянное `serve` — отдельное решение после ответа пользователя; оно не блокирует установку.
+
+Поддержать Linux x86_64 и aarch64. На macOS и native Windows `init` для включённой Orca возвращает явную ошибку `tool/orca` без установки; Windows bridge в WSL использует Linux-рецепт. Причина Linux-first: сервер пользователя работает на Ubuntu, а официальный macOS bundle имеет другой формат установки и ещё не имеет проверенного контракта безопасного извлечения/CLI-пути в этом сценарии. Не выдавать Linux-тест за подтверждение macOS, Windows, WSL или ARM64. Для запуска Orca на сервере позже могут потребоваться Electron libraries и Xvfb; это не часть install-only acceptance.
+
+## Источник и проверка релиза
+
+- Разрешать `latest` только через фиксированный официальный GitHub API `https://api.github.com/repos/stablyai/orca/releases/latest`; pin — через `https://api.github.com/repos/stablyai/orca/releases/tags/v<VERSION>`. Принимать лишь опубликованный, не draft и не prerelease релиз, чей `tag_name` точно равен `v<resolved-version>`; для pin он должен точно равняться запросу. Ожидать ровно один asset с официальным именем `orca-linux.AppImage` для x86_64 или `orca-linux-arm64.AppImage` для aarch64. `browser_download_url` должен точно совпасть с `https://github.com/stablyai/orca/releases/download/v<VERSION>/<asset-name>`. Требовать GitHub asset `digest` вида `sha256:<64 hex>` и допустимый `size`; не доверять произвольным URL из ответа и не запускать release metadata. Отсутствие/несовпадение полей — отказ. Для v1.4.221 эти имена, URL, размеры и digests видны в [официальном release API](https://api.github.com/repos/stablyai/orca/releases/latest).
+- Metadata GET ограничить 2 MiB и 20 секундами; AppImage — 512 MiB и 600 секундами. Использовать HTTPS-only redirects, фиксированные endpoints и bounded streaming download во временный файл в приватном Yashik data directory: не держать AppImage в `Vec<u8>`. Ограничить размер при получении независимо от `Content-Length`; сверить количество байт с asset `size` и SHA-256 до выставления executable bit или запуска. Сетевой/API сбой, отсутствие digest или неверный hash оставляют текущую версию и state без ложного владения. Не подменять официальный API сторонним зеркалом. `curl` нужен также для tool-only манифеста.
+- Orca поставляет CLI внутри Electron AppImage. Проверять **извлечённый** `<bundle>/resources/bin/orca-ide --version`, ожидая ровно `<resolved-version>`; `AppImage --version` может сообщить версию Electron. Выполнять probe из изолированного HOME/XDG, по абсолютному пути, с очищенным окружением, ограниченными stdout/stderr (по 4 KiB) и timeout 15 секунд. Это только проверка CLI; она не запускает `serve`. По [официальному headless guide](https://github.com/stablyai/orca/blob/main/docs/reference/headless-linux-server.md) AppImage допускает `--appimage-extract` без FUSE, а команда Linux называется `orca-ide`.
+
+## Установка и владение
+
+- Под блокировкой `init` сохранять проверенный AppImage только во временном staging directory и извлекать его там через `--appimage-extract`; staging не является владением. На сервере эталон v1.4.221 x86_64 после извлечения занимает около 647 MiB. Не полагаться на FUSE и не устанавливать пакеты. До запуска проверять достаточное свободное место для staged archive + extracted bundle и старой версии при upgrade; при недостатке места сообщать отказ до активации.
+- Извлечение выполнять без shell, в отдельной process group, с очищенным окружением и изолированным HOME; ограничить wall time 180 секунд, диагностический вывод 64 KiB, число entries 50 000, суммарный размер обычных файлов 2 GiB и глубину 64. Контролировать дерево во время работы и по завершении; при превышении предела/таймауте остановить всю process group. Не принимать absolute/escaping/dangling symlinks, special files, symlink вместо `squashfs-root` или CLI. Перед переносом проверить ожидаемый entrypoint, его executable mode и version probe. Ошибка оставляет старый launcher и state. Staging очищать только безопасным удалением дерева без следования symlink.
+- Переносить проверенное `squashfs-root` как целую версионную директорию `Paths.data/tools/orca/versions/<version>/bundle` в пределах одной файловой системы. При существующем незаписанном или изменённом target отказывать, не присваивая его. Создать стабильный **regular executable** `Paths.bin/orca-ide`, который через shell-quoted абсолютный путь `exec` вызывает `<bundle>/resources/bin/orca-ide "$@"`; установить launcher атомарной заменой только после успешной проверки bundle. Не занимать `bin/orca` (имя GNOME screen reader). Прямо проверить `bin/orca-ide --version` после активации. Повторный pinned `init` с тем же hash и неизменёнными файлами сообщает `Unchanged`, не меняя inode/mtime launcher или bundle. Для `latest` повторно разрешать актуальный релиз.
+- Сохранить `STATE_VERSION = 1` и старые записи Herdr. Расширить `InstalledTool` только полями с `serde(default)` для Orca bundle ownership либо ввести отдельную совместимую форму записи; запись `State.tools["orca"]` должна содержать id, resolved version, официальный metadata/asset URL, asset SHA-256, точные пути bundle root, внутреннего CLI и launcher, fingerprint **всего** bundle и launcher, а также сохраняемые предыдущие управляемые bundle при upgrade. Старые state без `tools` и старые Herdr records должны загружаться как прежде. Использовать отдельный `tool/orca` intent/completed journal и `RunReport`; ownership появляется лишь после успешной активации и durable state commit. На ошибке commit откатывать launcher к прежним байтам и убирать только созданный staging/new bundle, когда их fingerprint ещё совпадает. Прерванный intent не доказывает владение.
+- Fingerprint дерева вычислять **потоково** с установленными выше пределами, включая относительные пути, типы, mode, содержимое файлов и цели symlink. Существующий `util::hash_tree` собирает содержимое всех файлов в память и для ~647 MiB bundle не подходит; реализовать bounded streaming variant, не меняющий семантику существующих потребителей без их тестов. Перед upgrade, повторной установкой, doctor и удалением проверять весь bundle, внутренний CLI, launcher, типы путей и ожидаемые location/metadata; любые чужие/symlink/drift paths блокируют замену или удаление. `State.tools` с неизвестным id doctor помечает failure, а installer не передаёт его Herdr-проверке.
+- При удалении записи или `enabled: false` запрашивать подтверждение снятия управляемой Orca. Без подтверждения — `PendingRemoval`; при drift — `PendingRemoval` с причиной без удаления. После подтверждения и повторной проверки удалить только записанные launcher и bundle roots (включая записанную историю), сохранив user config/sessions; не удалять соседние/чужие файлы. `doctor` работает offline и read-only: сверяет ownership fingerprints и версию по внутреннему CLI с теми же bounded subprocess limits; не обращается к API, не стартует сервер и не меняет state. Выводить label Orca, Herdr проверять его прежним путём.
+
+## Реализация и проверки
+
+1. `src/schema.rs`, `src/validation.rs`, `src/effective.rs`, `src/main.rs`: закрытая `tools.orca` с теми же default/pin правилами, отдельный effective tool и вывод `check`. Обеспечить coexistence и независимое `enabled`.
+2. `src/install/api.rs`, `src/install/state.rs`, новый `src/install/orca.rs`, `src/install/mod.rs`: совместимая запись ownership, официальный resolver/downloader, bounded extraction/probe, streaming fingerprint, stage/activate/rollback/removal. Не обобщать Herdr-специфичный `tools.rs` ценой изменения его поведения; общие безопасные helpers допустимы после регрессионных тестов.
+3. `src/install/engine.rs`, `src/install/doctor.rs`: отдельный reconcile `tool/orca`, `curl` для tool-only, явный doctor dispatch по id и failure для неизвестного. Сбой Orca отражать как Failed, сохраняя независимую обработку других ресурсов.
+4. Тесты схемы, state, resolver и installer на локальных fixtures: exact/latest, API pin/digest/URL/size ошибки, разные Linux arch, отказ на чужих путях, неверном hash/probe, лимитах extraction, drift в любом файле дерева или launcher, rollback, repeat unchanged, pending/confirmed removal, offline doctor, old Herdr state и сосуществование. Fixtures не зависят от текущего live release. Linux end-to-end с настоящим official AppImage выделить отдельно от mock tests.
+5. README, пример манифеста и описание схемы: `tools.orca`, Linux scope, путь `orca-ide`, около 647 MiB для текущего extracted release, запуск `serve` как отдельный выбор. Сохранить предыдущее изменение `.agents/skills/business-feature/SKILL.md` как чужую правку.
+
+Execute Engineer владеет продуктовым кодом, тестами и пользовательской документацией Orca; root ведёт интеграцию версии/релиза и серверную приёмку. Все работают в общей рабочей копии и сохраняют изменения других. Затем отдельные Review Engineer и Validate Tester оформляют `review.md` и `validation.md` по профилю. План не устанавливает версию релиза и не разрешает публикацию сам по себе.
+
+## Критерии приёмки
+
+| ID | Критерий |
+| --- | --- |
+| O1 Schema | Старые v1 манифесты работают; Orca-only `harnesses: {}` и Orca+Herdr проходят `check`; defaults/pin/disabled независимы; неверные ключи, дубликаты, `null`, типы и версии отклоняются. `check` не пишет state и не скачивает metadata. |
+| O2 Resolver | Linux x86_64/aarch64 выбирают только ожидаемый AppImage официального stable release; latest и exact pin проверяют tag, canonical URL, size и digest. Отсутствующий/ложный digest, prerelease/draft, неподходящий asset, unsupported OS/arch и превышенные limits дают Failed без владения. |
+| O3 Install | Первый `init` устанавливает bundle и один `orca-ide`; внутренний CLI и launcher возвращают exact resolved version. Никакой listener/service не появляется. AppImage hash/probe/extraction error не меняют прежний launcher/state. |
+| O4 Reconcile | Повторный pinned `init` сообщает Unchanged с тем же inode/mtime. Collision и drift bundle/launcher блокируют upgrade. Отключение/удаление без подтверждения оставляет PendingRemoval; подтверждение удаляет только проверенные managed paths, сохраняя профили и соседние файлы. |
+| O5 Doctor/state | Old Herdr state и все Herdr tests проходят; doctor без сети/read-only проверяет оба инструмента по их id, весь Orca bundle, launcher и CLI version, сообщает missing/drift/interrupted/unknown-id как failure или interrupted. |
+| O6 Validation | `cargo fmt --check`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings` и Windows bridge tests проходят. На Ubuntu 24.04 x86_64 test server: `check`, первый/повторный `init`, `doctor`, `orca-ide --version`, запись state и отсутствие Orca service/listener подтверждены настоящим официальным asset; команды и результаты записаны в `validation.md`. ARM64/macOS/native Windows не заявляются проверенными без отдельных запусков. |
+
+Блокирующие замечания Review возвращаются в Execute; затронутые участки проходят повторные Review и Validate. Публикация релиза, если она потребуется, следует после локальной и серверной приёмки и отдельного решения root в рамках пользовательского запроса.

@@ -4,6 +4,7 @@ pub mod doctor;
 pub mod engine;
 pub mod executor;
 pub mod launcher;
+pub mod orca;
 pub mod paths;
 pub mod runtime;
 pub mod sources;

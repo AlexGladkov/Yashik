@@ -184,6 +184,64 @@ fn check_accepts_herdr_without_harnesses_and_does_not_create_installer_state() {
 }
 
 #[test]
+fn check_reports_orca_separately_and_does_not_create_installer_state() {
+    let temp = TestDir::new();
+    let manifest = temp.path().join("orca.yaml");
+    fs::write(
+        &manifest,
+        "version: 1\nharnesses: {}\ntools:\n  herdr: {}\n  orca:\n    version: '1.4.221'\n",
+    )
+    .unwrap();
+
+    let output = run(temp.path(), &["check", "orca.yaml"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Harnesses: (none enabled)"));
+    assert!(stdout.contains("Herdr (version: latest)"));
+    assert!(stdout.contains("Orca (version: 1.4.221)"));
+    assert_no_install_state(temp.path());
+}
+
+#[test]
+fn check_does_not_report_disabled_orca() {
+    let temp = TestDir::new();
+    let manifest = temp.path().join("orca-disabled.yaml");
+    fs::write(
+        &manifest,
+        "version: 1\nharnesses: {}\ntools:\n  orca:\n    enabled: false\n",
+    )
+    .unwrap();
+
+    let output = run(temp.path(), &["check", "orca-disabled.yaml"]);
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Orca (version:"));
+    assert_no_install_state(temp.path());
+}
+
+#[test]
+fn check_accepts_orca_without_harnesses_or_other_tools() {
+    let temp = TestDir::new();
+    let manifest = temp.path().join("orca-only.yaml");
+    fs::write(&manifest, "version: 1\nharnesses: {}\ntools:\n  orca: {}\n").unwrap();
+
+    let output = run(temp.path(), &["check", "orca-only.yaml"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Harnesses: (none enabled)"));
+    assert!(stdout.contains("Orca (version: latest)"));
+    assert!(!stdout.contains("Herdr (version:"));
+    assert_no_install_state(temp.path());
+}
+
+#[test]
 fn init_and_check_reject_invalid_operand_counts_before_writing_state() {
     let temp = TestDir::new();
 

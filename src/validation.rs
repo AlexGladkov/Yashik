@@ -32,6 +32,16 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), Vec<ValidationIssue>
         }
     }
 
+    if let Some(orca) = &manifest.tools.orca {
+        if !is_valid_harness_version(&orca.version) {
+            issue(
+                &mut issues,
+                "tools.orca.version",
+                "must be `latest` or an exact semantic version",
+            );
+        }
+    }
+
     validate_map("mcp", &manifest.mcp, &mut issues, validate_mcp);
     validate_map("skills", &manifest.skills, &mut issues, validate_skill);
     validate_map(

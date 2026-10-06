@@ -100,19 +100,22 @@ pub fn run(paths: &Paths) -> InstallResult<RunReport> {
     }
 
     for (id, tool) in &state.tools {
-        let (outcome, message) = if id != &tool.id {
-            (
-                Outcome::Failed,
-                "recorded tool key does not match its ID".to_owned(),
-            )
+        let checked = if id != &tool.id {
+            Err("recorded tool key does not match its ID".to_owned())
         } else {
-            match tools::doctor(paths, tool) {
-                Ok(()) => (
-                    Outcome::Unchanged,
-                    format!("Herdr {} is present and passed --version", tool.version),
-                ),
-                Err(error) => (Outcome::Failed, error),
+            match id.as_str() {
+                "herdr" if tool.orca.is_none() => tools::doctor(paths, tool)
+                    .map(|()| format!("Herdr {} is present and passed --version", tool.version)),
+                "orca" => super::orca::doctor(paths, tool).map(|()| {
+                    format!("Orca {} bundle, launcher and CLI are present", tool.version)
+                }),
+                "herdr" => Err("Herdr state contains an unexpected Orca bundle record".into()),
+                _ => Err("recorded tool ID is unknown to this installer".into()),
             }
+        };
+        let (outcome, message) = match checked {
+            Ok(message) => (Outcome::Unchanged, message),
+            Err(error) => (Outcome::Failed, error),
         };
         report.operations.push(ReportOperation {
             id: format!("tool/{id}"),

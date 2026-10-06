@@ -146,14 +146,14 @@ Rust не нужен. Скрипт устанавливает Ящик в `~/.lo
 
 ```sh
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
-  https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0/install.sh | \
-  sh -s -- --version 0.3.0
+  https://github.com/AlexGladkov/Yashik/releases/download/v0.4.0/install.sh | \
+  sh -s -- --version 0.4.0
 ```
 
 Чтобы сначала скачать и проверить сам скрипт, выполните в пустой папке:
 
 ```sh
-release=https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0
+release=https://github.com/AlexGladkov/Yashik/releases/download/v0.4.0
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/install.sh"
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/SHA256SUMS"
 awk '$2 == "install.sh" {print}' SHA256SUMS > install.sha256
@@ -198,7 +198,7 @@ Windows-пути, включая относительные, или абсолю
 внутри выбранного дистрибутива, где пользователь входит в сервисы.
 
 Для ручной установки Windows CLI скачайте ZIP своей архитектуры из
-[релиза](https://github.com/AlexGladkov/Yashik/releases/tag/v0.3.0), извлеките
+[релиза](https://github.com/AlexGladkov/Yashik/releases/tag/v0.4.0), извлеките
 `yashik.exe` в отдельную папку и добавьте её в пользовательский PATH.
 Статус проверки WinGet и WSL указан в
 [distribution validation](docs/features/distribution/validation.md).
@@ -259,14 +259,28 @@ yashik doctor
 включённым клиентам. Внутри клиента одноимённый ресурс заменяется целиком,
 а `{enabled: false}` отключает только эту привязку.
 
-Корневой `tools.herdr` управляет Herdr независимо от клиентов. При наличии
-этой записи Herdr включён по умолчанию; `version` принимает `latest` или
-точную версию, например `0.9.3`. Пустой `harnesses: {}` допустим для установки
-только Herdr. `init` проверяет официальный SHA-256 и `herdr --version`, затем
-записывает бинарник в `~/.local/bin/herdr` (на macOS — в каталог Yashik bin).
-Нужен `curl`; поддерживаются Linux и macOS на x86_64 и ARM64. `doctor` сверяет
-записанные бинарники без сетевого запроса. Удаление или отключение ранее
-управляемого Herdr требует подтверждения; настройки и сессии Herdr не удаляются.
+Корневые `tools.herdr` и `tools.orca` управляют этими инструментами независимо
+от клиентов и друг от друга. Herdr включён по умолчанию при наличии записи;
+`version` принимает `latest` или точную версию, например `0.9.3`. Пустой
+`harnesses: {}` допустим для установки только инструментов. Для Herdr `init`
+проверяет официальный SHA-256 и `herdr --version`, затем записывает бинарник в
+`~/.local/bin/herdr` (на macOS — в каталог Yashik bin). Нужен `curl`;
+поддерживаются Linux и macOS на x86_64 и ARM64. `doctor` сверяет записанные
+бинарники без сетевого запроса. Удаление или отключение ранее управляемого
+Herdr требует подтверждения; настройки и сессии Herdr не удаляются.
+
+Orca включён по умолчанию при наличии `tools.orca`; для него `version` принимает
+`latest` или строгий SemVer без префикса `v`, например `1.4.221`. Orca
+поддерживается на Linux x86_64 и ARM64: установщик проверяет и извлекает
+официальный AppImage без FUSE и создаёт команду `orca-ide`. Текущий извлечённый
+bundle занимает около 647 MiB. Эта интеграция устанавливает только CLI: она не
+запускает `serve` и не создаёт системную службу. На macOS и native Windows
+включённый Orca не устанавливается; Windows bridge использует Linux-рецепт
+внутри WSL. `check` показывает Orca отдельно и работает без сети и записи state.
+Для установки Orca нужны уже доступный `curl` и библиотеки Electron;
+Orca-only манифест не устанавливает системные пакеты. Для последующего запуска
+`serve` без рабочего стола нужен также Xvfb: зависимости перечислены в
+[официальной инструкции](https://github.com/stablyai/orca/blob/main/docs/reference/headless-linux-server.md).
 
 Источник — Git-репозиторий с необязательным `ref` или локальный файл/каталог.
 Для Git-источников нужен `git` в PATH.

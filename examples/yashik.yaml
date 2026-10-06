@@ -6,6 +6,9 @@ tools:
   herdr:
     enabled: true
     version: latest
+  orca:
+    enabled: true
+    version: latest
 
 harnesses:
   codex:

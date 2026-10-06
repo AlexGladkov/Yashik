@@ -13,7 +13,7 @@ from io import BytesIO
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 
 class InstallerScriptTests(unittest.TestCase):
@@ -154,14 +154,14 @@ class InstallerScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), self.binary_payload)
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
-        self.assertIn("Installed Yashik 0.3.0", result.stdout)
+        self.assertIn("Installed Yashik 0.4.0", result.stdout)
         self.assertIn("export PATH='" + str(target.parent) + "':\"$PATH\"", result.stdout)
         self.assertEqual(
             self.download_log.read_text(encoding="utf-8").splitlines(),
             [
-                "https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0/"
+                "https://github.com/AlexGladkov/Yashik/releases/download/v0.4.0/"
                 "yashik-linux-x86_64.tar.gz",
-                "https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0/SHA256SUMS",
+                "https://github.com/AlexGladkov/Yashik/releases/download/v0.4.0/SHA256SUMS",
             ],
         )
 
@@ -208,10 +208,10 @@ class InstallerScriptTests(unittest.TestCase):
                 self.env["YASHIK_TEST_ARCH"] = arch
                 self.asset_name = expected_asset
                 self.write_release()
-                result = self.run_installer("--version", "v0.3.0", "--bin-dir", str(self.temp_root / "custom bin"))
+                result = self.run_installer("--version", "v0.4.0", "--bin-dir", str(self.temp_root / "custom bin"))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 urls = self.download_log.read_text(encoding="utf-8").splitlines()
-                self.assertIn("/download/v0.3.0/" + expected_asset, urls[-2])
+                self.assertIn("/download/v0.4.0/" + expected_asset, urls[-2])
                 self.assertTrue((self.temp_root / "custom bin" / "yashik").is_file())
 
     def test_byte_identical_repeat_does_not_replace_file(self):
@@ -234,7 +234,7 @@ class InstallerScriptTests(unittest.TestCase):
         result = self.run_installer()
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Installed Yashik 0.3.0", result.stdout)
+        self.assertIn("Installed Yashik 0.4.0", result.stdout)
         self.assertEqual(target.read_bytes(), self.binary_payload)
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
@@ -296,7 +296,7 @@ class InstallerScriptTests(unittest.TestCase):
             ("--unknown",),
             ("--version",),
             ("--bin-dir",),
-            ("--version", "0.3.0;touch /tmp/pwned"),
+            ("--version", "0.4.0;touch /tmp/pwned"),
             ("--version", "01.2.1"),
             ("--bin-dir", "relative/path"),
             ("--bin-dir", ""),

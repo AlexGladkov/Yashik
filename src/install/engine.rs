@@ -80,6 +80,12 @@ pub fn init(effective: &EffectiveManifest, install_paths: &Paths) -> InstallResu
         &mut state,
         &mut report,
     )?;
+    super::orca::reconcile(
+        install_paths,
+        effective.orca.as_ref(),
+        &mut state,
+        &mut report,
+    )?;
     let mut runtime_cache = BTreeMap::<String, Result<RuntimeEnv, String>>::new();
     let mut cli_by_harness = BTreeMap::<HarnessId, InstalledCli>::new();
 

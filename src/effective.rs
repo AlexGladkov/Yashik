@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::schema::{
-    Agent, Harness, HarnessId, HerdrTool, LocalEntry, Manifest, Mcp, Rule, Skill, Source, StrictMap,
+    Agent, Harness, HarnessId, HerdrTool, LocalEntry, Manifest, Mcp, OrcaTool, Rule, Skill, Source,
+    StrictMap,
 };
 use crate::validation::{validate_manifest, ValidationIssue};
 
@@ -26,10 +27,16 @@ pub struct EffectiveHarness {
 pub struct EffectiveManifest {
     pub harnesses: BTreeMap<HarnessId, EffectiveHarness>,
     pub herdr: Option<EffectiveHerdr>,
+    pub orca: Option<EffectiveOrca>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectiveHerdr {
+    pub version: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveOrca {
     pub version: String,
 }
 
@@ -46,11 +53,22 @@ pub fn build_effective(
         harnesses.insert(*id, build_harness(*id, harness, manifest, manifest_dir));
     }
     let herdr = manifest.tools.herdr.as_ref().and_then(effective_herdr);
-    Ok(EffectiveManifest { harnesses, herdr })
+    let orca = manifest.tools.orca.as_ref().and_then(effective_orca);
+    Ok(EffectiveManifest {
+        harnesses,
+        herdr,
+        orca,
+    })
 }
 
 fn effective_herdr(tool: &HerdrTool) -> Option<EffectiveHerdr> {
     tool.enabled.then(|| EffectiveHerdr {
+        version: tool.version.clone(),
+    })
+}
+
+fn effective_orca(tool: &OrcaTool) -> Option<EffectiveOrca> {
+    tool.enabled.then(|| EffectiveOrca {
         version: tool.version.clone(),
     })
 }

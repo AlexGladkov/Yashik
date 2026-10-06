@@ -57,6 +57,210 @@ pub fn hash_tree(root: &Path) -> InstallResult<String> {
     Ok(hex_digest(&digest.finalize()))
 }
 
+/// Fingerprint a directory tree with fixed resource limits without keeping file
+/// contents in memory. The digest deliberately uses the same `yashik-tree-v1`
+/// encoding as [`hash_tree`].
+pub fn hash_tree_streaming_bounded(
+    root: &Path,
+    max_entries: usize,
+    max_total_file_bytes: u64,
+    max_depth: usize,
+) -> InstallResult<(String, u64)> {
+    if fs::symlink_metadata(root)
+        .map_err(|_| "source root does not exist".to_owned())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("source root is a symbolic link".to_owned());
+    }
+    let root = fs::canonicalize(root).map_err(|_| "source root does not exist".to_owned())?;
+    if !fs::metadata(&root)
+        .map_err(|_| "cannot inspect source root".to_owned())?
+        .is_dir()
+    {
+        return Err("source root is not a directory".to_owned());
+    }
+
+    let mut entries = Vec::new();
+    let mut total_file_bytes = 0u64;
+    collect_tree_bounded(
+        &root,
+        &root,
+        0,
+        max_entries,
+        max_total_file_bytes,
+        max_depth,
+        &mut total_file_bytes,
+        &mut entries,
+    )?;
+    entries.sort_by_key(|entry| path_bytes(&entry.relative));
+
+    let mut digest = Sha256::new();
+    digest.update(b"yashik-tree-v1\0");
+    for entry in entries {
+        hash_field(&mut digest, &path_bytes(&entry.relative));
+        digest.update([entry.kind]);
+        digest.update(entry.mode.to_be_bytes());
+        match entry.content {
+            StreamTreeContent::Directory => hash_field(&mut digest, &[]),
+            StreamTreeContent::Symlink(target) => hash_field(&mut digest, &target),
+            StreamTreeContent::File(before) => {
+                digest.update(before.len().to_be_bytes());
+                let mut file = open_regular_under(&root, &entry.path)?;
+                let opened = file
+                    .metadata()
+                    .map_err(|_| "cannot inspect source file".to_owned())?;
+                if !opened.is_file() || !same_file(&before, &opened) {
+                    return Err("source file changed during inspection".to_owned());
+                }
+                let mut bytes_read = 0u64;
+                let mut buffer = [0u8; 64 * 1024];
+                loop {
+                    let count = file
+                        .read(&mut buffer)
+                        .map_err(|_| "cannot read source file".to_owned())?;
+                    if count == 0 {
+                        break;
+                    }
+                    bytes_read = bytes_read.saturating_add(count as u64);
+                    if bytes_read > before.len() {
+                        return Err("source file changed during inspection".to_owned());
+                    }
+                    digest.update(&buffer[..count]);
+                }
+                let after = file
+                    .metadata()
+                    .map_err(|_| "cannot inspect source file".to_owned())?;
+                if bytes_read != before.len() || !same_content_generation(&before, &after) {
+                    return Err("source file changed during inspection".to_owned());
+                }
+            }
+        }
+    }
+    Ok((hex_digest(&digest.finalize()), total_file_bytes))
+}
+
+struct StreamTreeEntry {
+    path: PathBuf,
+    relative: PathBuf,
+    kind: u8,
+    mode: u32,
+    content: StreamTreeContent,
+}
+
+enum StreamTreeContent {
+    Directory,
+    File(fs::Metadata),
+    Symlink(Vec<u8>),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_tree_bounded(
+    root: &Path,
+    directory: &Path,
+    depth: usize,
+    max_entries: usize,
+    max_total_file_bytes: u64,
+    max_depth: usize,
+    total_file_bytes: &mut u64,
+    entries: &mut Vec<StreamTreeEntry>,
+) -> InstallResult<()> {
+    if depth > max_depth {
+        return Err("source tree exceeds the supported depth limit".to_owned());
+    }
+    let current = fs::canonicalize(directory)
+        .map_err(|_| "source tree changed during inspection".to_owned())?;
+    if !current.starts_with(root) {
+        return Err("source tree contains a path outside its root".to_owned());
+    }
+    // Do not collect an unbounded directory listing before checking the entry
+    // limit. The final digest sorts all bounded records by their relative path.
+    for child in fs::read_dir(directory).map_err(|_| "cannot read source directory".to_owned())? {
+        let child = child
+            .map_err(|_| "cannot read source directory".to_owned())?
+            .path();
+        let metadata = fs::symlink_metadata(&child)
+            .map_err(|_| "source tree changed during inspection".to_owned())?;
+        let relative = child
+            .strip_prefix(root)
+            .map_err(|_| "source tree contains a path outside its root".to_owned())?
+            .to_path_buf();
+        if relative.components().count() > max_depth {
+            return Err("source tree exceeds the supported depth limit".to_owned());
+        }
+        if entries.len() >= max_entries {
+            return Err("source tree exceeds the supported entry limit".to_owned());
+        }
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            metadata.permissions().mode() & 0o7777
+        };
+        #[cfg(not(unix))]
+        let mode = 0;
+
+        if metadata.file_type().is_symlink() {
+            let target =
+                fs::read_link(&child).map_err(|_| "cannot read source symbolic link".to_owned())?;
+            if target.is_absolute() {
+                return Err("source tree contains an absolute symbolic link".to_owned());
+            }
+            let resolved = fs::canonicalize(&child).map_err(|_| {
+                "source tree contains a dangling or cyclic symbolic link".to_owned()
+            })?;
+            if !resolved.starts_with(root) {
+                return Err("source tree contains a symbolic link outside its root".to_owned());
+            }
+            if fs::read_link(&child)
+                .map_err(|_| "source tree changed during inspection".to_owned())?
+                != target
+            {
+                return Err("source tree changed during inspection".to_owned());
+            }
+            entries.push(StreamTreeEntry {
+                path: child,
+                relative,
+                kind: b'l',
+                mode,
+                content: StreamTreeContent::Symlink(path_bytes(&target)),
+            });
+        } else if metadata.is_dir() {
+            entries.push(StreamTreeEntry {
+                path: child.clone(),
+                relative,
+                kind: b'd',
+                mode,
+                content: StreamTreeContent::Directory,
+            });
+            collect_tree_bounded(
+                root,
+                &child,
+                depth + 1,
+                max_entries,
+                max_total_file_bytes,
+                max_depth,
+                total_file_bytes,
+                entries,
+            )?;
+        } else if metadata.is_file() {
+            *total_file_bytes = total_file_bytes.saturating_add(metadata.len());
+            if *total_file_bytes > max_total_file_bytes {
+                return Err("source tree exceeds the supported expanded size limit".to_owned());
+            }
+            entries.push(StreamTreeEntry {
+                path: child,
+                relative,
+                kind: b'f',
+                mode,
+                content: StreamTreeContent::File(metadata),
+            });
+        } else {
+            return Err("source tree contains a special file".to_owned());
+        }
+    }
+    Ok(())
+}
+
 pub fn read_file_checked(root: &Path, path: &Path) -> InstallResult<Vec<u8>> {
     read_file_checked_bounded(root, path, u64::MAX)
 }

@@ -59,6 +59,31 @@ pub struct InstalledTool {
     /// Previously resolved releases retained under the Yashik data directory.
     #[serde(default)]
     pub previous_versions: Vec<InstalledToolVersion>,
+    /// Present for Orca's managed AppImage bundle. Old Herdr records omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orca: Option<InstalledOrcaOwnership>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledOrcaOwnership {
+    pub bundle_root: PathBuf,
+    pub cli_executable: PathBuf,
+    pub bundle_fingerprint: String,
+    pub launcher_fingerprint: String,
+    /// Verified older Orca bundles retained to support rollback and exact pins.
+    #[serde(default)]
+    pub previous_bundles: Vec<InstalledOrcaVersion>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledOrcaVersion {
+    pub version: String,
+    pub metadata_url: String,
+    pub asset_url: String,
+    pub sha256: String,
+    pub bundle_root: PathBuf,
+    pub cli_executable: PathBuf,
+    pub bundle_fingerprint: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

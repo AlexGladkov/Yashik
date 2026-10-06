@@ -67,11 +67,22 @@ pub struct Manifest {
 pub struct Tools {
     #[serde(default, deserialize_with = "deserialize_herdr_tool")]
     pub herdr: Option<HerdrTool>,
+    #[serde(default, deserialize_with = "deserialize_orca_tool")]
+    pub orca: Option<OrcaTool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HerdrTool {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_latest")]
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OrcaTool {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_latest")]
@@ -128,6 +139,59 @@ where
     }
 
     deserializer.deserialize_map(HerdrToolVisitor)
+}
+
+fn deserialize_orca_tool<'de, D>(deserializer: D) -> Result<Option<OrcaTool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct OrcaToolVisitor;
+
+    impl<'de> Visitor<'de> for OrcaToolVisitor {
+        type Value = Option<OrcaTool>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an Orca tool mapping")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut enabled = None;
+            let mut version = None;
+            while let Some(field) = map.next_key::<String>()? {
+                match field.as_str() {
+                    "enabled" => {
+                        if enabled.is_some() {
+                            return Err(de::Error::duplicate_field("enabled"));
+                        }
+                        enabled = Some(map.next_value::<bool>()?);
+                    }
+                    "version" => {
+                        if version.is_some() {
+                            return Err(de::Error::duplicate_field("version"));
+                        }
+                        version = Some(map.next_value::<Option<String>>()?);
+                    }
+                    _ => {
+                        return Err(de::Error::unknown_field(&field, &["enabled", "version"]));
+                    }
+                }
+            }
+            let version = match version {
+                None => default_latest(),
+                Some(Some(version)) => version,
+                Some(None) => return Err(de::Error::custom("`version` must not be null")),
+            };
+            Ok(Some(OrcaTool {
+                enabled: enabled.unwrap_or_else(default_true),
+                version,
+            }))
+        }
+    }
+
+    deserializer.deserialize_map(OrcaToolVisitor)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
