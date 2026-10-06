@@ -1,6 +1,6 @@
 # Validation: Orca tools and Yashik 0.4.0
 
-Status: current local validation passes after the Linux portability patch. The recorded real Ubuntu 24.04 x86_64 acceptance predates that patch and must be repeated to cover the latest source. Release CI, final artifact verification and publication remain pending.
+Status: complete. Local validation, all release CI gates, verified final assets, final-source server acceptance, public installer upgrade and Homebrew publication pass. Yashik 0.4.0 is published.
 
 ## Research reference package
 
@@ -67,3 +67,19 @@ Cross-target attempts on the available Linux x86_64 GNU runner:
 - `cargo check --locked --target=x86_64-apple-darwin` — could not compile because this Rust installation lacks the Apple target standard library (`can't find crate for core` / `std`). This Linux runner has no macOS SDK or Apple linker.
 
 No musl or macOS cross-build/release CI runner was invoked, and no real ARM64, macOS, or native Windows runtime result is established by these checks. The Ubuntu server acceptance above was recorded before this portability patch; this validation turn did not repeat provisioning on the server, so that result does not cover the patched atomic rename path.
+
+## Final-source CI Linux artifact acceptance
+
+Release workflow https://github.com/AlexGladkov/Yashik/actions/runs/37457841143 builds source ad0b65678ef4278663a7e539455834e7f03ff3e4. Its Linux x86_64 musl archive SHA256 is 20054f552918620befc8ce8092fbfaeec5302b9df7699b48ca5e7ac48b8d8b75, verified locally and remotely before extraction. On the actual Ubuntu test server this artifact reports Yashik 0.4.0. Manifest check, two repeat init runs, Orca 1.4.221 version probe, and doctor pass. Both tools remain Unchanged, launcher inode/mtime/size remain identical, and state SHA256 before/after doctor is identical. No listener was added. This is final-source repeat/doctor acceptance; the initial live Orca installation predates the portability fix. Native Linux CI fixtures exercise the patched atomic activation path, including destination collision refusal.
+
+## Published release and distribution validation
+
+Release CI https://github.com/AlexGladkov/Yashik/actions/runs/37457841143 completed successfully for source ad0b65678ef4278663a7e539455834e7f03ff3e4: pinned Rust format/lint/tests, all four Unix native build/test/installer jobs, Windows x86_64/ARM64 packages, WinGet manifest and portable installation validation, and all four native Homebrew checks. The isolated WSL1 smoke actually passed with an imported official Ubuntu rootfs; this validates the Yashik bridge, not an Orca serve session.
+
+All eight assembled release files were verified: seven SHA256 checksums, four single-executable Unix tar archives and two single-executable Windows ZIP archives. Draft assets matched CI assets byte-for-byte before publishing https://github.com/AlexGladkov/Yashik/releases/tag/v0.4.0. The release is public and latest. Both pinned and latest public install.sh match the verified artifact, SHA256 8071d66ec3f1976b9648362ffa2a114b4270cd24eb901f11aab11f11fb7f1a20.
+
+On test-server-root the verified public installer upgraded /root/.local/bin/yashik from 0.3.0 to 0.4.0. Manifest check, bare init, read-only doctor, Herdr 0.9.3 and Orca 1.4.221 probes passed. Both tool launchers retained their inode/mtime/size; state SHA256 remained identical before and after doctor. The managed compose remains /root/opt/yashik-setup/yashik-compose.yaml. No serve service, authentication, pairing or agent/model session was started.
+
+The owned AlexGladkov/homebrew-tap main branch now carries the byte-identical CI-tested production formula in its existing root yashik.rb, commit 13ab790. A briefly added Formula/yashik.rb duplicate was removed in that commit. No community WinGet publication is claimed.
+
+The requested four-harness/agent/MCP configuration remains unfinished and is separate from this tool release. Orca live runtime acceptance is Linux x86_64 installation/version/doctor only; Linux ARM64 Orca runtime and serve remain untested. macOS/native Windows Orca backends are explicitly unsupported.
