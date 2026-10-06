@@ -11,7 +11,7 @@ use crate::install::api::{
     Outcome, Paths, PreparedBinding, ResourceKind, RuntimeEnv, WriteChoice,
 };
 use crate::install::state::{ArtifactRecord, OperationPhase, OperationRecord, SourceRecord, State};
-use crate::install::{adapters, executor, paths, runtime, sources, state, util};
+use crate::install::{adapters, executor, paths, runtime, sources, state, tools, util};
 use crate::schema::{HarnessId, Mcp, ResourceFormat, Source};
 
 #[derive(Clone, Debug, Default)]
@@ -74,6 +74,12 @@ pub fn init(effective: &EffectiveManifest, install_paths: &Paths) -> InstallResu
 
     let missing_host_tools =
         bootstrap_host_tools(install_paths, effective, &mut state, &mut report)?;
+    tools::reconcile(
+        install_paths,
+        effective.herdr.as_ref(),
+        &mut state,
+        &mut report,
+    )?;
     let mut runtime_cache = BTreeMap::<String, Result<RuntimeEnv, String>>::new();
     let mut cli_by_harness = BTreeMap::<HarnessId, InstalledCli>::new();
 
@@ -1452,6 +1458,9 @@ fn bootstrap_host_tools(
     report: &mut RunReport,
 ) -> InstallResult<BTreeSet<String>> {
     let mut required = BTreeSet::<String>::new();
+    if effective.herdr.is_some() {
+        required.insert("curl".into());
+    }
     if effective
         .harnesses
         .keys()
@@ -1761,7 +1770,7 @@ fn ensure_self_launcher(install_paths: &Paths) -> InstallResult<bool> {
 
 // Centralizing durable outcome commits keeps journal/state/report ordering consistent.
 #[allow(clippy::too_many_arguments)]
-fn finish_operation(
+pub(crate) fn finish_operation(
     install_paths: &Paths,
     state: &mut State,
     report: &mut RunReport,
@@ -1788,7 +1797,7 @@ fn finish_operation(
     Ok(())
 }
 
-fn complete_without_mutation(
+pub(crate) fn complete_without_mutation(
     install_paths: &Paths,
     state: &mut State,
     report: &mut RunReport,
@@ -1809,7 +1818,7 @@ fn complete_without_mutation(
     )
 }
 
-fn begin_operation(
+pub(crate) fn begin_operation(
     install_paths: &Paths,
     state: &mut State,
     id: &str,

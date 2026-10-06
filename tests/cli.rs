@@ -33,6 +33,7 @@ fn run(root: &Path, args: &[&str]) -> Output {
     let home = fs::canonicalize(home).unwrap();
     Command::new(env!("CARGO_BIN_EXE_yashik"))
         .args(args)
+        .current_dir(&root)
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env("XDG_DATA_HOME", root.join("xdg-data"))
@@ -40,6 +41,162 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .env("XDG_STATE_HOME", root.join("xdg-state"))
         .output()
         .expect("run yashik")
+}
+
+#[test]
+fn init_uses_default_manifest_from_current_directory_without_network_work() {
+    let temp = TestDir::new();
+    let manifest = temp.path().join("yashik-compose.yaml");
+    fs::write(&manifest, "version: 1\nharnesses: {}\n").unwrap();
+
+    let output = run(temp.path(), &["init"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("Installing from {}", manifest.display())));
+}
+
+#[test]
+fn init_missing_default_manifest_names_file_and_does_not_search_parent_or_write_state() {
+    let temp = TestDir::new();
+    fs::write(
+        temp.path().join("yashik-compose.yaml"),
+        "version: 1\nharnesses: {}\n",
+    )
+    .unwrap();
+    let child = temp.path().join("child");
+    fs::create_dir(&child).unwrap();
+
+    let output = run(&child, &["init"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("yashik-compose.yaml"));
+    assert!(stderr.contains("yashik init <manifest>"));
+    assert_no_install_state(&child);
+}
+
+#[test]
+fn init_rejects_invalid_default_manifest_before_writing_state() {
+    let temp = TestDir::new();
+    fs::write(
+        temp.path().join("yashik-compose.yaml"),
+        "version: [this is not valid\n",
+    )
+    .unwrap();
+
+    let output = run(temp.path(), &["init"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid YAML or schema"));
+    assert_no_install_state(temp.path());
+}
+
+#[test]
+fn init_explicit_path_overrides_default_manifest() {
+    let temp = TestDir::new();
+    fs::write(
+        temp.path().join("yashik-compose.yaml"),
+        "this default file is intentionally invalid\n",
+    )
+    .unwrap();
+    let explicit = temp.path().join("custom.yaml");
+    fs::write(&explicit, "version: 1\nharnesses: {}\n").unwrap();
+
+    let output = run(temp.path(), &["init", explicit.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("Installing from {}", explicit.display())));
+}
+
+#[test]
+fn init_explicit_relative_path_in_subdirectory_overrides_default_manifest() {
+    let temp = TestDir::new();
+    fs::write(
+        temp.path().join("yashik-compose.yaml"),
+        "this default file is intentionally invalid\n",
+    )
+    .unwrap();
+    let config_dir = temp.path().join("configs");
+    fs::create_dir(&config_dir).unwrap();
+    let explicit = config_dir.join("custom.yaml");
+    fs::write(&explicit, "version: 1\nharnesses: {}\n").unwrap();
+
+    let output = run(temp.path(), &["init", "configs/custom.yaml"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("Installing from {}", explicit.display())));
+}
+
+#[test]
+fn check_accepts_relative_manifest_with_local_resource_in_subdirectory() {
+    let temp = TestDir::new();
+    let config_dir = temp.path().join("configs");
+    let local_source = config_dir.join("skills/sample");
+    fs::create_dir_all(&local_source).unwrap();
+    let manifest = config_dir.join("custom.yaml");
+    fs::write(
+        &manifest,
+        "version: 1\nharnesses:\n  codex: {}\nskills:\n  sample:\n    source:\n      type: local\n      path: ./skills/sample\n",
+    )
+    .unwrap();
+
+    let output = run(temp.path(), &["check", "configs/custom.yaml"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!("Manifest is valid: {}", manifest.display())));
+    assert!(stdout.contains("Skills: sample"));
+}
+
+#[test]
+fn check_accepts_herdr_without_harnesses_and_does_not_create_installer_state() {
+    let temp = TestDir::new();
+    let manifest = temp.path().join("herdr.yaml");
+    fs::write(
+        &manifest,
+        "version: 1\nharnesses: {}\ntools:\n  herdr: {}\n",
+    )
+    .unwrap();
+
+    let output = run(temp.path(), &["check", "herdr.yaml"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Harnesses: (none enabled)"));
+    assert!(stdout.contains("Herdr (version: latest)"));
+    assert_no_install_state(temp.path());
+}
+
+#[test]
+fn init_and_check_reject_invalid_operand_counts_before_writing_state() {
+    let temp = TestDir::new();
+
+    for args in [
+        vec!["init", "one.yaml", "two.yaml"],
+        vec!["check"],
+        vec!["check", "one.yaml", "two.yaml"],
+    ] {
+        let output = run(temp.path(), &args);
+        assert!(!output.status.success(), "unexpected success for {args:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid arguments"));
+        assert_no_install_state(temp.path());
+    }
 }
 
 fn assert_no_install_state(root: &Path) {
@@ -210,8 +367,14 @@ fn internal_launcher_rejects_path_like_ids_before_reading_state() {
 #[test]
 fn help_and_version_are_available() {
     let temp = TestDir::new();
-    assert!(run(temp.path(), &["--help"]).status.success());
+    let help = run(temp.path(), &["--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("init [<manifest>]"));
+    assert!(help.contains("yashik-compose.yaml"));
+    assert!(help.contains("check <manifest>"));
     let version = run(temp.path(), &["--version"]);
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("yashik 0.2.1"));
+    assert!(String::from_utf8_lossy(&version.stdout)
+        .contains(concat!("yashik ", env!("CARGO_PKG_VERSION"))));
 }

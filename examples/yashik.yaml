@@ -2,6 +2,11 @@
 # For a real installation use codex-voltagent.yaml or all-five.yaml.
 version: 1 # YAML schema version
 
+tools:
+  herdr:
+    enabled: true
+    version: latest
+
 harnesses:
   codex:
     version: "0.50.0" # illustrative CLI pin; use a version supported by its recipe

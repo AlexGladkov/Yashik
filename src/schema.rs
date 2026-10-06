@@ -49,6 +49,8 @@ pub struct Manifest {
     pub version: u32,
     #[serde(deserialize_with = "deserialize_unique_map")]
     pub harnesses: StrictMap<HarnessId, Harness>,
+    #[serde(default)]
+    pub tools: Tools,
     #[serde(default, deserialize_with = "deserialize_unique_map")]
     pub mcp: StrictMap<String, Mcp>,
     #[serde(default, deserialize_with = "deserialize_unique_map")]
@@ -57,6 +59,75 @@ pub struct Manifest {
     pub agents: StrictMap<String, Agent>,
     #[serde(default, deserialize_with = "deserialize_unique_map")]
     pub rules: StrictMap<String, Rule>,
+}
+
+/// Closed set of tools managed independently from the selected harnesses.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Tools {
+    #[serde(default, deserialize_with = "deserialize_herdr_tool")]
+    pub herdr: Option<HerdrTool>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HerdrTool {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_latest")]
+    pub version: String,
+}
+
+fn default_latest() -> String {
+    "latest".to_owned()
+}
+
+fn deserialize_herdr_tool<'de, D>(deserializer: D) -> Result<Option<HerdrTool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct HerdrToolVisitor;
+
+    impl<'de> Visitor<'de> for HerdrToolVisitor {
+        type Value = Option<HerdrTool>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a Herdr tool mapping")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut enabled = None;
+            let mut version = None;
+            while let Some(field) = map.next_key::<String>()? {
+                match field.as_str() {
+                    "enabled" => {
+                        if enabled.is_some() {
+                            return Err(de::Error::duplicate_field("enabled"));
+                        }
+                        enabled = Some(map.next_value::<bool>()?);
+                    }
+                    "version" => {
+                        if version.is_some() {
+                            return Err(de::Error::duplicate_field("version"));
+                        }
+                        version = Some(map.next_value::<String>()?);
+                    }
+                    _ => {
+                        return Err(de::Error::unknown_field(&field, &["enabled", "version"]));
+                    }
+                }
+            }
+            Ok(Some(HerdrTool {
+                enabled: enabled.unwrap_or_else(default_true),
+                version: version.unwrap_or_else(default_latest),
+            }))
+        }
+    }
+
+    deserializer.deserialize_map(HerdrToolVisitor)
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]

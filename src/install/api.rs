@@ -38,6 +38,29 @@ pub struct InstalledCli {
     pub launcher_fingerprint: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledToolVersion {
+    pub version: String,
+    pub asset_url: String,
+    pub sha256: String,
+    pub executable: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstalledTool {
+    pub id: String,
+    pub version: String,
+    pub metadata_url: String,
+    pub asset_url: String,
+    pub sha256: String,
+    pub versioned_executable: PathBuf,
+    pub executable: PathBuf,
+    pub fingerprint: String,
+    /// Previously resolved releases retained under the Yashik data directory.
+    #[serde(default)]
+    pub previous_versions: Vec<InstalledToolVersion>,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKind {

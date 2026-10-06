@@ -22,6 +22,16 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), Vec<ValidationIssue>
         issue(&mut issues, "version", "must be exactly 1");
     }
 
+    if let Some(herdr) = &manifest.tools.herdr {
+        if !is_valid_harness_version(&herdr.version) {
+            issue(
+                &mut issues,
+                "tools.herdr.version",
+                "must be `latest` or an exact semantic version",
+            );
+        }
+    }
+
     validate_map("mcp", &manifest.mcp, &mut issues, validate_mcp);
     validate_map("skills", &manifest.skills, &mut issues, validate_skill);
     validate_map(

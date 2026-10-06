@@ -64,3 +64,58 @@ fn yaml_parser_requires_fields_and_semantics_report_paths() {
         }
     }
 }
+
+#[test]
+fn herdr_is_a_closed_root_tool_with_defaults_and_semver_validation() {
+    let manifest: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  herdr: {}\n").unwrap();
+    assert!(validate_manifest(&manifest).is_ok());
+    let effective = build_effective(&manifest, Path::new("/tmp/config")).unwrap();
+    assert_eq!(effective.herdr.unwrap().version, "latest");
+
+    let pinned: Manifest = serde_yaml::from_str(
+        "version: 1\nharnesses: {}\ntools:\n  herdr:\n    enabled: true\n    version: '0.9.3'\n",
+    )
+    .unwrap();
+    assert_eq!(
+        build_effective(&pinned, Path::new("/tmp/config"))
+            .unwrap()
+            .herdr
+            .unwrap()
+            .version,
+        "0.9.3"
+    );
+
+    let disabled: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  herdr:\n    enabled: false\n")
+            .unwrap();
+    assert!(build_effective(&disabled, Path::new("/tmp/config"))
+        .unwrap()
+        .herdr
+        .is_none());
+
+    let invalid: Manifest =
+        serde_yaml::from_str("version: 1\nharnesses: {}\ntools:\n  herdr:\n    version: v0.9.3\n")
+            .unwrap();
+    let issues = validate_manifest(&invalid).unwrap_err();
+    assert!(issues
+        .iter()
+        .any(|issue| issue.path == "tools.herdr.version"));
+}
+
+#[test]
+fn herdr_schema_rejects_unknown_fields_duplicates_null_and_missing_harnesses() {
+    for input in [
+        "version: 1\nharnesses: {}\ntools: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  herdr: null\n",
+        "version: 1\nharnesses: {}\ntools:\n  extra: {}\n",
+        "version: 1\nharnesses: {}\ntools:\n  herdr:\n    enabled: 'true'\n",
+        "version: 1\nharnesses: {}\ntools:\n  herdr:\n    version: latest\n    version: 1.2.3\n",
+        "version: 1\ntools:\n  herdr: {}\n",
+    ] {
+        assert!(
+            serde_yaml::from_str::<Manifest>(input).is_err(),
+            "Herdr schema unexpectedly accepted: {input}"
+        );
+    }
+}

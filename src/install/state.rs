@@ -5,7 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::install::api::{InstallResult, InstalledCli, ManagedBinding, Outcome, Paths};
+use crate::install::api::{
+    InstallResult, InstalledCli, InstalledTool, ManagedBinding, Outcome, Paths,
+};
 use crate::install::util::{atomic_write, private_dir, read_file_checked_bounded};
 
 pub const STATE_VERSION: u32 = 1;
@@ -21,6 +23,9 @@ pub struct State {
     pub artifacts: BTreeMap<String, ArtifactRecord>,
     /// CLI records are keyed by the harness id (`codex`, `claude`, etc.).
     pub clis: BTreeMap<String, InstalledCli>,
+    /// Independently managed tools are keyed by their closed manifest ID.
+    #[serde(default)]
+    pub tools: BTreeMap<String, InstalledTool>,
     pub bindings: BTreeMap<String, ManagedBinding>,
     /// Latest durable operation outcome per stable operation id.
     pub operations: BTreeMap<String, OperationRecord>,
@@ -39,6 +44,7 @@ impl State {
             sources: BTreeMap::new(),
             artifacts: BTreeMap::new(),
             clis: BTreeMap::new(),
+            tools: BTreeMap::new(),
             bindings: BTreeMap::new(),
             operations: BTreeMap::new(),
         }

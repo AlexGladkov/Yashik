@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::schema::{
-    Agent, Harness, HarnessId, LocalEntry, Manifest, Mcp, Rule, Skill, Source, StrictMap,
+    Agent, Harness, HarnessId, HerdrTool, LocalEntry, Manifest, Mcp, Rule, Skill, Source, StrictMap,
 };
 use crate::validation::{validate_manifest, ValidationIssue};
 
@@ -25,6 +25,12 @@ pub struct EffectiveHarness {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectiveManifest {
     pub harnesses: BTreeMap<HarnessId, EffectiveHarness>,
+    pub herdr: Option<EffectiveHerdr>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveHerdr {
+    pub version: String,
 }
 
 pub fn build_effective(
@@ -39,7 +45,14 @@ pub fn build_effective(
         }
         harnesses.insert(*id, build_harness(*id, harness, manifest, manifest_dir));
     }
-    Ok(EffectiveManifest { harnesses })
+    let herdr = manifest.tools.herdr.as_ref().and_then(effective_herdr);
+    Ok(EffectiveManifest { harnesses, herdr })
+}
+
+fn effective_herdr(tool: &HerdrTool) -> Option<EffectiveHerdr> {
+    tool.enabled.then(|| EffectiveHerdr {
+        version: tool.version.clone(),
+    })
 }
 
 fn build_harness(

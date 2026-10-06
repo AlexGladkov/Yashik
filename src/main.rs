@@ -6,6 +6,8 @@ use yashik::install::{doctor, engine, launcher, paths};
 use yashik::schema::Manifest;
 use yashik::validation::ValidationIssue;
 
+const DEFAULT_MANIFEST: &str = "yashik-compose.yaml";
+
 fn main() -> ExitCode {
     ExitCode::from(run(std::env::args().skip(1).collect()))
 }
@@ -20,18 +22,26 @@ fn run(args: Vec<String>) -> u8 {
             println!("yashik {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        [command, manifest] if command == "check" => match load_effective(Path::new(manifest)) {
-            Ok((manifest_path, effective)) => {
-                println!("Manifest is valid: {}", manifest_path.display());
-                report_effective(&effective);
-                0
-            }
-            Err(code) => code,
-        },
-        [command, manifest] if command == "init" => match load_effective(Path::new(manifest)) {
+        [command] if command == "init" => match load_effective(Path::new(DEFAULT_MANIFEST), true) {
             Ok((manifest_path, effective)) => run_init(&manifest_path, &effective),
             Err(code) => code,
         },
+        [command, manifest] if command == "check" => {
+            match load_effective(Path::new(manifest), false) {
+                Ok((manifest_path, effective)) => {
+                    println!("Manifest is valid: {}", manifest_path.display());
+                    report_effective(&effective);
+                    0
+                }
+                Err(code) => code,
+            }
+        }
+        [command, manifest] if command == "init" => {
+            match load_effective(Path::new(manifest), false) {
+                Ok((manifest_path, effective)) => run_init(&manifest_path, &effective),
+                Err(code) => code,
+            }
+        }
         [command] if command == "doctor" => run_doctor(),
         [command, launch_id] if command == "mcp-launch" => run_launcher(launch_id),
         _ => {
@@ -41,11 +51,21 @@ fn run(args: Vec<String>) -> u8 {
     }
 }
 
-fn load_effective(manifest_path: &Path) -> Result<(PathBuf, EffectiveManifest), u8> {
+fn load_effective(
+    manifest_path: &Path,
+    is_default_manifest: bool,
+) -> Result<(PathBuf, EffectiveManifest), u8> {
     let bytes = match std::fs::read(manifest_path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!("error: could not read manifest: {error}");
+            if is_default_manifest {
+                eprintln!(
+                    "error: could not read default manifest `{}`: {error}\nhint: pass an explicit path with `yashik init <manifest>`",
+                    manifest_path.display()
+                );
+            } else {
+                eprintln!("error: could not read manifest: {error}");
+            }
             return Err(1);
         }
     };
@@ -242,8 +262,7 @@ fn valid_safe_identifier(value: &str) -> bool {
 
 fn report_effective(effective: &EffectiveManifest) {
     if effective.harnesses.is_empty() {
-        println!("No enabled harnesses are listed.");
-        return;
+        println!("Harnesses: (none enabled)");
     }
     for harness in effective.harnesses.values() {
         let version = harness.version.as_deref().unwrap_or("latest");
@@ -252,6 +271,9 @@ fn report_effective(effective: &EffectiveManifest) {
         print_resource_names("Skills", harness.skills.keys().map(String::as_str));
         print_resource_names("Agents", harness.agents.keys().map(String::as_str));
         print_resource_names("Rules", harness.rules.keys().map(String::as_str));
+    }
+    if let Some(herdr) = &effective.herdr {
+        println!("\nHerdr (version: {})", herdr.version);
     }
 }
 
@@ -279,7 +301,10 @@ fn print_report(report: &engine::RunReport) {
 fn print_help() {
     println!("{}", usage());
     println!("`check` validates a manifest without changing the environment.");
-    println!("`init` installs and reconciles the requested CLIs and resources.");
+    println!(
+        "`init [<manifest>]` installs and reconciles the requested CLIs, tools, and resources."
+    );
+    println!("Without a path, `init` reads `./{DEFAULT_MANIFEST}` from the current directory.");
     println!(
         "`doctor` inspects recorded installations without changing files or accessing the network."
     );
@@ -287,5 +312,40 @@ fn print_help() {
 }
 
 fn usage() -> &'static str {
-    "Usage:\n  yashik init <manifest>\n  yashik check <manifest>\n  yashik doctor\n  yashik mcp-launch <launch-id>\n  yashik --help\n  yashik --version"
+    "Usage:\n  yashik init [<manifest>]\n  yashik check <manifest>\n  yashik doctor\n  yashik mcp-launch <launch-id>\n  yashik --help\n  yashik --version"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn explicit_manifest_resolves_relative_local_resources_from_manifest_directory() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("yashik-main-{}-{nonce}", std::process::id()));
+        let manifest_dir = root.join("configs");
+        let local_source = manifest_dir.join("skills/sample");
+        fs::create_dir_all(&local_source).unwrap();
+        let manifest_path = manifest_dir.join("custom.yaml");
+        fs::write(
+            &manifest_path,
+            "version: 1\nharnesses:\n  codex: {}\nskills:\n  sample:\n    source:\n      type: local\n      path: ./skills/sample\n",
+        )
+        .unwrap();
+
+        let (selected_path, effective) = load_effective(&manifest_path, false).unwrap();
+        assert_eq!(selected_path, manifest_path);
+        let resource = &effective.harnesses.values().next().unwrap().skills["sample"];
+        assert_eq!(
+            resource.local_source_path.as_deref(),
+            Some(local_source.as_path())
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

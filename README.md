@@ -7,10 +7,13 @@
 изменения машины, `doctor` проверяет записанное окружение без переустановки.
 Пользователь самостоятельно входит в Codex, Claude и другие сервисы.
 
+Начиная с `v0.3.0`, команда `yashik init` читает `yashik-compose.yaml`
+из текущей папки. Путь к другому манифесту можно передать явно.
+
 ## Установка из готового конфига
 
 Если у вас уже есть YAML-конфиг, [установите Ящик](#установка), затем
-передайте путь к файлу:
+передайте путь к нему:
 
 ```sh
 yashik check /путь/к/моему-сетапу.yaml
@@ -18,10 +21,12 @@ yashik init /путь/к/моему-сетапу.yaml
 yashik doctor
 ```
 
-Замените `/путь/к/моему-сетапу.yaml` на путь к своему файлу. Если вы открыли
-терминал в папке с конфигом, достаточно его имени: `yashik init ./yashik.yaml`.
-Путь с пробелами заключайте в кавычки: `yashik init "./мой сетап.yaml"`.
-На Windows выполняйте эти команды в WSL; файл должен быть доступен внутри WSL.
+Замените `/путь/к/моему-сетапу.yaml` на путь к своему файлу. Путь для
+`init` можно опустить, если сохранить файл как
+`yashik-compose.yaml` и запустить команду из этой папки. `check` всегда требует
+путь к файлу. Путь с пробелами заключайте в кавычки:
+`yashik init "./мой сетап.yaml"`. На Windows запускайте команды из папки с
+конфигом; файл должен быть доступен внутри WSL.
 
 `check` проверяет конфиг без установки. `init` устанавливает перечисленные
 в нём клиенты и ресурсы. `doctor` проверяет установленное окружение.
@@ -29,12 +34,15 @@ yashik doctor
 
 ## Подготовьте свой сетап
 
-Сохраните следующий конфиг в файл `yashik.yaml`. Это готовый пример: Ящик
-установит Codex CLI версии `0.159.3` и два субагента из репозитория VoltAgent.
-Для скачивания Git-источника нужен `git` в PATH.
+Сохраните следующий конфиг в файл `yashik-compose.yaml`. Это готовый пример: Ящик
+установит Codex CLI версии `0.159.3`, Herdr и два субагента из репозитория
+VoltAgent. Для скачивания Git-источника нужен `git` в PATH.
 
 ```yaml
 version: 1
+tools:
+  herdr:
+    version: latest
 harnesses:
   codex:
     version: "0.159.3"
@@ -63,8 +71,8 @@ harnesses:
 После установки Ящика выполните из папки с этим файлом:
 
 ```sh
-yashik check ./yashik.yaml
-yashik init ./yashik.yaml
+yashik check ./yashik-compose.yaml
+yashik init ./yashik-compose.yaml
 yashik doctor
 ```
 
@@ -138,14 +146,14 @@ Rust не нужен. Скрипт устанавливает Ящик в `~/.lo
 
 ```sh
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
-  https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1/install.sh | \
-  sh -s -- --version 0.2.1
+  https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0/install.sh | \
+  sh -s -- --version 0.3.0
 ```
 
 Чтобы сначала скачать и проверить сам скрипт, выполните в пустой папке:
 
 ```sh
-release=https://github.com/AlexGladkov/Yashik/releases/download/v0.2.1
+release=https://github.com/AlexGladkov/Yashik/releases/download/v0.3.0
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/install.sh"
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSLO "$release/SHA256SUMS"
 awk '$2 == "install.sh" {print}' SHA256SUMS > install.sha256
@@ -176,19 +184,21 @@ Windows-пакет содержит `yashik.exe`, который запуска�
 winget install --id AlexGladkov.Yashik --exact
 # В новой оболочке:
 yashik --distro Ubuntu setup
-yashik --distro Ubuntu check .\yashik.yaml
-yashik --distro Ubuntu init .\yashik.yaml
+yashik --distro Ubuntu check .\yashik-compose.yaml
+yashik --distro Ubuntu init .\yashik-compose.yaml
 yashik --distro Ubuntu doctor
 ```
 
 Без `--distro` используется дистрибутив WSL по умолчанию. `setup` устанавливает
 Linux Ящик из закреплённого релиза; для замены другой версии нужен
-`setup --force`. `init` и `check` принимают Windows-пути, включая относительные,
-или абсолютные Linux-пути. Все CLI, MCP, агенты, skills и rules устанавливаются
+`setup --force`. Путь для `init` можно опустить, когда в текущей папке лежит
+`yashik-compose.yaml`. `check` всегда требует путь. Обе команды принимают
+Windows-пути, включая относительные, или абсолютные Linux-пути. Все CLI, MCP,
+агенты, skills и rules устанавливаются
 внутри выбранного дистрибутива, где пользователь входит в сервисы.
 
 Для ручной установки Windows CLI скачайте ZIP своей архитектуры из
-[релиза](https://github.com/AlexGladkov/Yashik/releases/tag/v0.2.1), извлеките
+[релиза](https://github.com/AlexGladkov/Yashik/releases/tag/v0.3.0), извлеките
 `yashik.exe` в отдельную папку и добавьте её в пользовательский PATH.
 Статус проверки WinGet и WSL указан в
 [distribution validation](docs/features/distribution/validation.md).
@@ -248,6 +258,15 @@ yashik doctor
 `pi`, `omp`. Общие `mcp`, `skills`, `agents`, `rules` применяются ко всем
 включённым клиентам. Внутри клиента одноимённый ресурс заменяется целиком,
 а `{enabled: false}` отключает только эту привязку.
+
+Корневой `tools.herdr` управляет Herdr независимо от клиентов. При наличии
+этой записи Herdr включён по умолчанию; `version` принимает `latest` или
+точную версию, например `0.9.3`. Пустой `harnesses: {}` допустим для установки
+только Herdr. `init` проверяет официальный SHA-256 и `herdr --version`, затем
+записывает бинарник в `~/.local/bin/herdr` (на macOS — в каталог Yashik bin).
+Нужен `curl`; поддерживаются Linux и macOS на x86_64 и ARM64. `doctor` сверяет
+записанные бинарники без сетевого запроса. Удаление или отключение ранее
+управляемого Herdr требует подтверждения; настройки и сессии Herdr не удаляются.
 
 Источник — Git-репозиторий с необязательным `ref` или локальный файл/каталог.
 Для Git-источников нужен `git` в PATH.

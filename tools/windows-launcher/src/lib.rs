@@ -12,7 +12,7 @@ const INITIALIZE_PROBE: &str =
 const VERSION_PROBE: &str = r#"exec "$HOME/.local/bin/yashik" --version"#;
 
 pub fn help_text() -> &'static str {
-    "Usage:\n  yashik [--distro NAME] setup [--force]\n  yashik [--distro NAME] init MANIFEST\n  yashik [--distro NAME] check MANIFEST\n  yashik [--distro NAME] doctor\n  yashik --version\n  yashik --help\n\nYashik runs its Linux installer inside an already installed WSL distribution.\nIt does not install WSL or change Windows features.\n"
+    "Usage:\n  yashik [--distro NAME] setup [--force]\n  yashik [--distro NAME] init [MANIFEST]\n  yashik [--distro NAME] check MANIFEST\n  yashik [--distro NAME] doctor\n  yashik --version\n  yashik --help\n\nWithout a path, init reads ./yashik-compose.yaml from the current directory.\nYashik runs its Linux installer inside an already installed WSL distribution.\nIt does not install WSL or change Windows features.\n"
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,7 +32,7 @@ enum Request {
     },
     Init {
         distro: Option<OsString>,
-        manifest: OsString,
+        manifest: Option<OsString>,
     },
     Check {
         distro: Option<OsString>,
@@ -106,7 +106,7 @@ pub fn run(arguments: &[OsString], wsl: &mut impl WslExecutor) -> Result<Outcome
             Ok(Outcome::Exit(run_forward(wsl, &forward)?))
         }
         Request::Init { distro, manifest } => {
-            run_yashik_command(wsl, distro.as_deref(), "init", Some(manifest))
+            run_yashik_command(wsl, distro.as_deref(), "init", manifest)
         }
         Request::Check { distro, manifest } => {
             run_yashik_command(wsl, distro.as_deref(), "check", Some(manifest))
@@ -231,7 +231,23 @@ fn parse_request(arguments: &[OsString]) -> Result<Request, String> {
             )),
             _ => Err("setup accepts only the optional --force flag".to_owned()),
         },
-        "init" | "check" => {
+        "init" => match operands.as_slice() {
+            [] => Ok(Request::Init {
+                distro,
+                manifest: None,
+            }),
+            [manifest] => {
+                if manifest.to_string_lossy().starts_with('-') {
+                    return Err(format!("unknown init flag: {}", manifest.to_string_lossy()));
+                }
+                Ok(Request::Init {
+                    distro,
+                    manifest: Some(manifest.clone()),
+                })
+            }
+            _ => Err("init accepts at most one manifest path".to_owned()),
+        },
+        "check" => {
             let [manifest] = operands.as_slice() else {
                 return Err(format!("{command} requires exactly one manifest path"));
             };
@@ -241,17 +257,10 @@ fn parse_request(arguments: &[OsString]) -> Result<Request, String> {
                     manifest.to_string_lossy()
                 ));
             }
-            if command == "init" {
-                Ok(Request::Init {
-                    distro,
-                    manifest: manifest.clone(),
-                })
-            } else {
-                Ok(Request::Check {
-                    distro,
-                    manifest: manifest.clone(),
-                })
-            }
+            Ok(Request::Check {
+                distro,
+                manifest: manifest.clone(),
+            })
         }
         "doctor" => {
             if !operands.is_empty() {
@@ -740,7 +749,7 @@ mod tests {
         );
         let forwarded = strings(&wsl.forward_args[0]);
         assert_eq!(forwarded.last().map(String::as_str), Some("--force"));
-        assert!(forwarded[5].contains("releases/download/v0.2.1'"));
+        assert!(forwarded[5].contains(&format!("releases/download/v{}'", VERSION)));
         assert!(forwarded[5].contains("download \"$base/install.sh\""));
         assert!(forwarded[5].contains("SHA256SUMS"));
         assert_eq!(forwarded[7], "--force");
@@ -802,8 +811,25 @@ mod tests {
     }
 
     #[test]
+    fn init_without_manifest_forwards_only_the_command_to_wsl() {
+        let mut wsl = MockWsl::default();
+        wsl.default_distro_prefix("Ubuntu");
+        wsl.version_matches();
+
+        let args = ["init"].map(OsString::from);
+        assert_eq!(run(&args, &mut wsl), Ok(Outcome::Exit(0)));
+        let forwarded = strings(&wsl.forward_args[0]);
+        assert_eq!(&forwarded[forwarded.len() - 2..], ["yashik-bridge", "init"]);
+        assert!(!wsl
+            .capture_args
+            .iter()
+            .flatten()
+            .any(|argument| argument == OsStr::new("wslpath")));
+    }
+
+    #[test]
     #[cfg(windows)]
-    fn windows_manifest_is_canonicalized_and_given_to_wslpath_as_one_argument() {
+    fn windows_manifest_is_canonicalized_for_init_and_check() {
         let root = unique_temp_path();
         fs::create_dir_all(&root).unwrap();
         let manifest = root.join("space $ & ' manifest.yaml");
@@ -812,33 +838,36 @@ mod tests {
         let canonical_text = canonical.to_string_lossy().into_owned();
         let expected = canonical_windows_path(&canonical_text);
 
-        let mut wsl = MockWsl::default();
-        wsl.explicit_distro_prefix("Ubuntu");
-        wsl.version_matches();
-        wsl.queue(successful(
-            b"/mnt/c/temp/space $ & ' manifest.yaml\n".to_vec(),
-        ));
-        let args = ["--distro", "Ubuntu", "check", manifest.to_str().unwrap()].map(OsString::from);
-        assert_eq!(run(&args, &mut wsl), Ok(Outcome::Exit(0)));
-        let conversion_call = wsl
-            .capture_args
-            .iter()
-            .find(|arguments| {
-                arguments
-                    .iter()
-                    .any(|argument| argument == OsStr::new("wslpath"))
-            })
-            .expect("wslpath conversion call");
-        let conversion = strings(conversion_call);
-        assert_eq!(
-            conversion[0..6],
-            ["--distribution", "Ubuntu", "--exec", "wslpath", "-a", "-u"]
-        );
-        assert_eq!(conversion[6], expected);
-        assert_eq!(
-            strings(&wsl.forward_args[0]).last().map(String::as_str),
-            Some("/mnt/c/temp/space $ & ' manifest.yaml")
-        );
+        for command in ["init", "check"] {
+            let mut wsl = MockWsl::default();
+            wsl.explicit_distro_prefix("Ubuntu");
+            wsl.version_matches();
+            wsl.queue(successful(
+                b"/mnt/c/temp/space $ & ' manifest.yaml\n".to_vec(),
+            ));
+            let args =
+                ["--distro", "Ubuntu", command, manifest.to_str().unwrap()].map(OsString::from);
+            assert_eq!(run(&args, &mut wsl), Ok(Outcome::Exit(0)));
+            let conversion_call = wsl
+                .capture_args
+                .iter()
+                .find(|arguments| {
+                    arguments
+                        .iter()
+                        .any(|argument| argument == OsStr::new("wslpath"))
+                })
+                .expect("wslpath conversion call");
+            let conversion = strings(conversion_call);
+            assert_eq!(
+                conversion[0..6],
+                ["--distribution", "Ubuntu", "--exec", "wslpath", "-a", "-u"]
+            );
+            assert_eq!(conversion[6], expected);
+            assert_eq!(
+                strings(&wsl.forward_args[0]).last().map(String::as_str),
+                Some("/mnt/c/temp/space $ & ' manifest.yaml")
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -847,6 +876,7 @@ mod tests {
         for args in [
             vec!["--unknown"],
             vec!["init", "manifest.yaml", "extra"],
+            vec!["check"],
             vec!["check", "--unknown"],
             vec!["doctor", "extra"],
             vec!["setup", "--other"],

@@ -54,6 +54,23 @@ fn missing_state_load_is_empty_and_read_only() {
 }
 
 #[test]
+fn state_without_tools_field_remains_backward_compatible() {
+    let temp = TempTree::new();
+    let paths = temp.paths();
+    fs::create_dir_all(&paths.state).unwrap();
+    fs::write(
+        paths.state.join("state.json"),
+        br#"{"version":1,"sources":{},"artifacts":{},"clis":{},"bindings":{},"operations":{}}"#,
+    )
+    .unwrap();
+
+    let loaded = state::load(&paths).unwrap();
+
+    assert!(loaded.tools.is_empty());
+    assert_eq!(loaded.version, STATE_VERSION);
+}
+
+#[test]
 fn state_save_load_and_journal_keep_private_versioned_records() {
     let temp = TempTree::new();
     let paths = temp.paths();

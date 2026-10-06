@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::api::{InstallResult, InstalledCli, LaunchSpec, Outcome, Paths, ResourceKind};
-use super::{adapters, state};
+use super::{adapters, state, tools};
 use crate::install::engine::{ReportOperation, RunReport};
 use crate::install::util;
 
@@ -21,7 +21,11 @@ pub fn run(paths: &Paths) -> InstallResult<RunReport> {
         .notes
         .push("Authentication and remote model access were not checked.".into());
 
-    if state.clis.is_empty() && state.bindings.is_empty() && state.artifacts.is_empty() {
+    if state.clis.is_empty()
+        && state.bindings.is_empty()
+        && state.artifacts.is_empty()
+        && state.tools.is_empty()
+    {
         report
             .notes
             .push("No recorded Yashik installation was found.".into());
@@ -93,6 +97,28 @@ pub fn run(paths: &Paths) -> InstallResult<RunReport> {
                 message: Some("could not inspect recorded CLI binary".into()),
             }),
         }
+    }
+
+    for (id, tool) in &state.tools {
+        let (outcome, message) = if id != &tool.id {
+            (
+                Outcome::Failed,
+                "recorded tool key does not match its ID".to_owned(),
+            )
+        } else {
+            match tools::doctor(paths, tool) {
+                Ok(()) => (
+                    Outcome::Unchanged,
+                    format!("Herdr {} is present and passed --version", tool.version),
+                ),
+                Err(error) => (Outcome::Failed, error),
+            }
+        };
+        report.operations.push(ReportOperation {
+            id: format!("tool/{id}"),
+            outcome,
+            message: Some(message),
+        });
     }
 
     for (key, artifact) in &state.artifacts {

@@ -8,4 +8,5 @@ pub mod paths;
 pub mod runtime;
 pub mod sources;
 pub mod state;
+pub mod tools;
 pub mod util;

@@ -2,7 +2,7 @@
 
 set -eu
 
-DEFAULT_VERSION=0.2.1
+DEFAULT_VERSION=0.3.0
 
 fail() {
     printf 'install.sh: %s\n' "$*" >&2
@@ -16,7 +16,7 @@ usage() {
         '' \
         'Install the verified Yashik binary for this platform.' \
         'VERSION accepts MAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH.' \
-        'The default version is 0.2.1; the default directory is ~/.local/bin.'
+        'The default version is 0.3.0; the default directory is ~/.local/bin.'
 }
 
 requested_version=$DEFAULT_VERSION
