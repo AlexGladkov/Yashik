@@ -35,6 +35,11 @@ None.
 - Download byte bound: the AppImage downloader receives the official asset
   size and streams to its private staging file with an exact write-time cap;
   metadata response capture also stops when it exceeds its byte limit.
+- Portability follow-up: the no-replace rename uses Linux's direct syscall
+  number and ABI constants, which are present for the supported x86_64 and
+  aarch64 GNU and musl targets; other OSes compile the explicit unsupported
+  stubs. The regression test confirms an existing destination is preserved
+  and an absent destination is moved atomically.
 
 ## Focused verification
 
@@ -44,6 +49,8 @@ None.
 - `cargo test --locked --lib install::orca::tests::` — passed, 5 tests.
 - `cargo test --locked --lib install::orca::reconciliation_fixtures::` —
   passed, 11 tests.
+- `cargo test --locked --lib install::orca::tests::bundle_rename_uses_atomic_no_replace_semantics`
+  — passed, 1 test.
 
 The root reports `cargo test --locked`, `cargo fmt --check`, strict Clippy,
 and Windows bridge mock tests passing. Real Linux server acceptance remains

@@ -936,8 +936,12 @@ fn rename_bundle_new(source: &Path, destination: &Path) -> InstallResult<()> {
     let destination = std::ffi::CString::new(destination.as_os_str().as_bytes())
         .map_err(|_| "Orca bundle path contains a null byte".to_owned())?;
     // Atomic NOREPLACE prevents a racing unowned bundle from being overwritten.
+    // `libc::renameat2` is missing from some libcs, including musl. Calling
+    // the Linux syscall directly keeps the atomic no-replace guarantee across
+    // glibc and musl without falling back to an overwrite-capable rename.
     let result = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2 as libc::c_long,
             libc::AT_FDCWD,
             source.as_ptr(),
             libc::AT_FDCWD,
@@ -1334,7 +1338,7 @@ fn ensure_available_space(paths: &Paths, archive_size: u64) -> InstallResult<()>
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn available_space(path: &Path) -> InstallResult<u64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())
@@ -1352,7 +1356,7 @@ fn available_space(path: &Path) -> InstallResult<u64> {
     Ok(stats.f_bavail.saturating_mul(unit))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 fn available_space(_path: &Path) -> InstallResult<u64> {
     Err("Orca AppImage installation requires Linux filesystem space checks".into())
 }
@@ -1685,16 +1689,19 @@ fn confirm_removal(question: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::probe_version_temporary;
     use super::TEMP_COUNTER;
     use super::{
         copy_bounded_stream, expected_asset_name, extraction_usage_with_limits,
-        probe_version_temporary, read_bounded_stream, resolve_metadata, LATEST_METADATA_URL,
+        read_bounded_stream, resolve_metadata, LATEST_METADATA_URL,
     };
     use crate::install::util;
     use std::fs;
     use std::io::Cursor;
     use std::path::PathBuf;
     use std::sync::atomic::Ordering;
+    #[cfg(target_os = "linux")]
     use std::time::{Duration, Instant};
 
     fn fixture_directory(name: &str) -> PathBuf {
@@ -1731,6 +1738,35 @@ mod tests {
         fs::write(root.join("c"), b"c").unwrap();
         assert!(extraction_usage_with_limits(&root, 2, 100, 10).is_err());
         assert!(extraction_usage_with_limits(&root, 10, 2, 10).is_err());
+        let _ = util::remove_tree_checked(&directory);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bundle_rename_uses_atomic_no_replace_semantics() {
+        let directory = fixture_directory("rename-noreplace");
+        let source = directory.join("source");
+        let destination = directory.join("destination");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(source.join("owned"), b"source").unwrap();
+        fs::write(destination.join("foreign"), b"destination").unwrap();
+
+        assert!(super::rename_bundle_new(&source, &destination).is_err());
+        assert_eq!(fs::read(source.join("owned")).unwrap(), b"source");
+        assert_eq!(
+            fs::read(destination.join("foreign")).unwrap(),
+            b"destination"
+        );
+
+        let movable = directory.join("movable");
+        let moved = directory.join("moved");
+        fs::create_dir(&movable).unwrap();
+        fs::write(movable.join("owned"), b"moved source").unwrap();
+        super::rename_bundle_new(&movable, &moved).unwrap();
+        assert!(!movable.exists());
+        assert_eq!(fs::read(moved.join("owned")).unwrap(), b"moved source");
+
         let _ = util::remove_tree_checked(&directory);
     }
 

@@ -1,6 +1,6 @@
 # Validation: Orca tools and Yashik 0.4.0
 
-Status: final local validation and real Ubuntu 24.04 x86_64 first/repeat installation acceptance passed. Independent review has no open findings. Release CI, final artifact verification and publication remain pending.
+Status: current local validation passes after the Linux portability patch. The recorded real Ubuntu 24.04 x86_64 acceptance predates that patch and must be repeated to cover the latest source. Release CI, final artifact verification and publication remain pending.
 
 ## Research reference package
 
@@ -16,7 +16,7 @@ Root prepared version 0.4.0 in root/Windows Cargo manifests and lockfiles and in
 
 These checks do not establish real Windows/WSL runtime acceptance. The final Rust suite and independent review are now green. Real Linux server installation and CI packaging remain root-owned checks; no release publication is claimed.
 
-## Final local validation
+## Initial local validation before the portability patch
 
 Run on 2026-10-06 from the repository root after the Orca implementation and schema fixture edits stabilized:
 
@@ -50,3 +50,20 @@ The actual /root/opt/yashik-setup/yashik-compose.yaml now pins Herdr 0.9.3 and O
 Real State.tools records both tools, with Orca's canonical pinned API/asset URL and official AppImage SHA256 7bf17b3619c2a4f2346b1894c652e2790b89277e501a78ce8911249a5e12f0f6. The streaming bundle fingerprint is aba4221d43c5d0efdc824f848f5de74f6f03972a6958cd775ecbfd1897dd4cbe. State.clis remains empty. An inspection of /proc executable paths found no running packaged Orca process, and listening ports matched the pre-install baseline (SSH, existing HTTP/HTTPS services and local DNS; no Orca listener).
 
 This validates actual provisioning on the Linux x86_64 server without FUSE or a desktop. It does not exercise serve, authentication, pairing, interactive agent calls, native ARM64, macOS or Windows runtimes. The requested harness/agent/MCP setup remains separate. CI-produced artifact and public installer acceptance are still required before release completion.
+
+## Revalidation after the Linux portability patch
+
+Run on 2026-10-06 against the current working-tree patch that calls the Linux `renameat2` syscall directly (for musl compatibility) and limits the filesystem-space helper to Linux:
+
+- `cargo fmt --all -- --check` — passed.
+- `cargo check --locked` — passed.
+- `cargo test --locked --lib install::orca::tests::` — passed, 6 tests. This includes `bundle_rename_uses_atomic_no_replace_semantics`.
+- `cargo test --locked` — passed, 127 tests, 0 failed, 0 ignored; 0 doc tests. Breakdown: 52 library, 1 binary, and 74 integration tests.
+- `cargo clippy --locked --all-targets -- -D warnings` — passed.
+
+Cross-target attempts on the available Linux x86_64 GNU runner:
+
+- `cargo check --locked --target=x86_64-unknown-linux-musl` — could not compile because this Rust installation lacks the `x86_64-unknown-linux-musl` target standard library (`can't find crate for core`). The runner has no `rustup`, musl compiler, or Zig.
+- `cargo check --locked --target=x86_64-apple-darwin` — could not compile because this Rust installation lacks the Apple target standard library (`can't find crate for core` / `std`). This Linux runner has no macOS SDK or Apple linker.
+
+No musl or macOS cross-build/release CI runner was invoked, and no real ARM64, macOS, or native Windows runtime result is established by these checks. The Ubuntu server acceptance above was recorded before this portability patch; this validation turn did not repeat provisioning on the server, so that result does not cover the patched atomic rename path.
